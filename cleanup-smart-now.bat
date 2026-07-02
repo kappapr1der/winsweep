@@ -8,7 +8,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -CleanSpotifyCache -CleanRegistry -CleanExtraPaths -TempOlderThanDays 2 -CacheOlderThanDays 7 %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -AggressiveSafe -CleanDeveloperCaches -CleanRegistry -TempOlderThanDays 0 -CacheOlderThanDays 1 %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Finished with exit code %EXITCODE%.

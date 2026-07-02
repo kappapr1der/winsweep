@@ -15,7 +15,7 @@ if not "%ERRORLEVEL%"=="0" (
     exit /b
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Deep -TempOlderThanDays 2 -CacheOlderThanDays 7 %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Deep -AggressiveSafe -CleanDeveloperCaches -CleanRegistry -TempOlderThanDays 0 -CacheOlderThanDays 1 %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Finished with exit code %EXITCODE%.

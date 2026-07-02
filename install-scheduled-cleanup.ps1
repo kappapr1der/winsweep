@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
-    [string]$LightNoon = "12:35",
-    [string]$LightEvening = "22:45",
+    [string]$GuardStart = "00:15",
+    [int]$GuardEveryHours = 3,
+    [int]$LowFreeGB = 35,
+    [int]$LowFreePercent = 18,
     [string]$DeepWeekly = "03:20",
     [ValidateSet("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")]
     [string]$DeepDay = "Sunday",
@@ -10,6 +12,8 @@ param(
     [switch]$SpotifyCache,
     [switch]$Registry,
     [switch]$ExtraPaths,
+    [switch]$DeveloperCaches,
+    [switch]$GameCaches,
     [switch]$RecycleBin
 )
 
@@ -32,6 +36,14 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
+
+try {
+    Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue |
+        Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
+}
+catch {
+    Write-Warning "Could not clear old tasks under $taskPath. $($_.Exception.Message)"
+}
 
 function Register-CleanupTask {
     param(
@@ -64,33 +76,45 @@ if ($Registry) {
 if ($ExtraPaths) {
     $optionalArgs += " -CleanExtraPaths"
 }
+if ($DeveloperCaches) {
+    $optionalArgs += " -CleanDeveloperCaches"
+}
+if ($GameCaches) {
+    $optionalArgs += " -CleanGameCaches"
+}
 if ($RecycleBin) {
     $optionalArgs += " -ClearRecycleBin"
 }
 
-$noonTrigger = New-ScheduledTaskTrigger -Daily -At $LightNoon -RandomDelay (New-TimeSpan -Minutes 20)
-$eveningTrigger = New-ScheduledTaskTrigger -Daily -At $LightEvening -RandomDelay (New-TimeSpan -Minutes 20)
+$guardTrigger = New-ScheduledTaskTrigger -Daily -At $GuardStart -RandomDelay (New-TimeSpan -Minutes 15)
+$guardRepetition = New-CimInstance -ClassName MSFT_TaskRepetitionPattern -Namespace Root/Microsoft/Windows/TaskScheduler -ClientOnly
+$guardRepetition.Interval = "PT${GuardEveryHours}H"
+$guardRepetition.Duration = "P1D"
+$guardTrigger.Repetition = $guardRepetition
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -RandomDelay (New-TimeSpan -Minutes 5)
 $deepTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $DeepDay -At $DeepWeekly -RandomDelay (New-TimeSpan -Minutes 40)
 
 Register-CleanupTask `
-    -Name "Light Noon" `
-    -Trigger $noonTrigger `
-    -CleanupArgs "-TempOlderThanDays 2 -CacheOlderThanDays 7$optionalArgs" `
-    -Description "Light cleanup of temp files and safe caches."
+    -Name "Pressure Guard" `
+    -Trigger $guardTrigger `
+    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 1$optionalArgs" `
+    -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low."
 
 Register-CleanupTask `
-    -Name "Light Evening" `
-    -Trigger $eveningTrigger `
-    -CleanupArgs "-TempOlderThanDays 2 -CacheOlderThanDays 7$optionalArgs" `
-    -Description "Light cleanup of temp files and safe caches."
+    -Name "Startup Guard" `
+    -Trigger $logonTrigger `
+    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 1$optionalArgs" `
+    -Description "Checks disk pressure shortly after logon and cleans safe caches only when free space is low."
 
 Register-CleanupTask `
     -Name "Deep Weekly" `
     -Trigger $deepTrigger `
-    -CleanupArgs "-Deep -TempOlderThanDays 2 -CacheOlderThanDays 7$optionalArgs" `
+    -CleanupArgs "-Deep -AggressiveSafe -TempOlderThanDays 1 -CacheOlderThanDays 3$optionalArgs" `
     -Description "Weekly deeper cleanup including Windows component cleanup."
 
 Write-Host ""
 Write-Host "Done. Tasks run as: $currentUser"
 Write-Host "Task Scheduler path: $taskPath"
+Write-Host "Pressure guard: every $GuardEveryHours hour(s), starting around $GuardStart, only below $LowFreeGB GB or $LowFreePercent% free."
+Write-Host "Deep cleanup: $DeepDay around $DeepWeekly."
 Write-Host "Logs: $env:ProgramData\CodexWindowsCleanup\Logs"

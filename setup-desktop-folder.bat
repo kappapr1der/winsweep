@@ -15,7 +15,7 @@ if not "%ERRORLEVEL%"=="0" (
     exit /b
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SETUP%" -InstallSchedule -SpotifyCache -Registry -ExtraPaths %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SETUP%" -InstallSchedule -SpotifyCache -Registry -ExtraPaths -DeveloperCaches %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Finished with exit code %EXITCODE%.

@@ -2,12 +2,21 @@
 param(
     [switch]$Deep,
     [switch]$DryRun,
+    [switch]$SmartGuard,
+    [switch]$AggressiveSafe,
     [switch]$CleanBrowserCaches,
     [switch]$CleanAppCaches,
     [switch]$CleanSpotifyCache,
     [switch]$CleanRegistry,
     [switch]$CleanExtraPaths,
+    [switch]$CleanDeveloperCaches,
+    [switch]$CleanGameCaches,
     [switch]$ClearRecycleBin,
+    [switch]$Detailed,
+    [switch]$Quiet,
+    [int]$MinFreeGB = 35,
+    [int]$MinFreePercent = 18,
+    [string]$GuardDrive = "",
     [int]$TempOlderThanDays = 2,
     [int]$CacheOlderThanDays = 7,
     [int]$LogRetentionDays = 30,
@@ -20,6 +29,8 @@ $ErrorActionPreference = "Continue"
 
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
+$script:PotentialBytes = [int64]0
+$script:PotentialItems = 0
 $script:FailedItems = 0
 
 function Test-IsAdministrator {
@@ -45,6 +56,9 @@ function New-LogFolder {
     foreach ($candidate in $candidates) {
         try {
             New-Item -ItemType Directory -Path $candidate -Force -ErrorAction Stop | Out-Null
+            $testPath = Join-Path $candidate ".winsweep-write-test"
+            Set-Content -LiteralPath $testPath -Value "ok" -Encoding ASCII -ErrorAction Stop
+            Remove-Item -LiteralPath $testPath -Force -ErrorAction SilentlyContinue
             return $candidate
         }
         catch {
@@ -62,16 +76,68 @@ function Write-Log {
     param(
         [string]$Message,
         [ValidateSet("INFO", "WARN", "ERROR")]
-        [string]$Level = "INFO"
+        [string]$Level = "INFO",
+        [switch]$Detail
     )
 
     $line = "{0:u} [{1}] {2}" -f (Get-Date), $Level, $Message
-    Write-Host $line
     try {
         Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8 -ErrorAction Stop
     }
     catch {
-        Write-Host "Could not write to log file: $LogFile"
+        if (-not $Quiet) {
+            Write-Host "Could not write to log file: $LogFile"
+        }
+    }
+
+    if ($Quiet) {
+        return
+    }
+
+    if ($Detail -and -not $Detailed) {
+        return
+    }
+
+    if ($Level -eq "INFO" -and -not $Detailed) {
+        if ($Message -like "Skipped missing path*") {
+            return
+        }
+        if ($Message -like "[dry-run] Would remove*") {
+            return
+        }
+        if ($Message -like "[dry-run] Would export*") {
+            return
+        }
+    }
+
+    $prefix = switch ($Level) {
+        "WARN" { "!" }
+        "ERROR" { "x" }
+        default { ">" }
+    }
+    $color = switch ($Level) {
+        "WARN" { "Yellow" }
+        "ERROR" { "Red" }
+        default { "Cyan" }
+    }
+
+    Write-Host ("{0} {1}" -f $prefix, $Message) -ForegroundColor $color
+}
+
+function Write-Panel {
+    param(
+        [string]$Title,
+        [string[]]$Lines = @()
+    )
+
+    if ($Quiet) {
+        return
+    }
+
+    Write-Host ""
+    Write-Host ("== {0} ==" -f $Title) -ForegroundColor Green
+    foreach ($line in $Lines) {
+        Write-Host ("   {0}" -f $line) -ForegroundColor Gray
     }
 }
 
@@ -88,6 +154,120 @@ function Format-ByteSize {
         return "{0:N2} KB" -f ($Bytes / 1KB)
     }
     return "$Bytes bytes"
+}
+
+function Get-DriveSnapshot {
+    param([string]$Drive)
+
+    if ([string]::IsNullOrWhiteSpace($Drive)) {
+        $Drive = $env:SystemDrive
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Drive)) {
+        return $null
+    }
+
+    $driveName = $Drive.TrimEnd("\")
+    if ($driveName.Length -eq 1) {
+        $driveName = "$driveName`:"
+    }
+
+    try {
+        $disk = Get-CimInstance -ClassName Win32_LogicalDisk -Filter ("DeviceID='{0}'" -f $driveName) -ErrorAction Stop
+        if ($null -ne $disk -and [int64]$disk.Size -gt 0) {
+            $freeBytes = [int64]$disk.FreeSpace
+            $totalBytes = [int64]$disk.Size
+            $freePercent = [Math]::Round(($freeBytes / $totalBytes) * 100, 1)
+
+            return [pscustomobject]@{
+                Drive = $driveName
+                FreeBytes = $freeBytes
+                TotalBytes = $totalBytes
+                FreePercent = $freePercent
+            }
+        }
+    }
+    catch {
+        Write-Log "CIM drive lookup failed for $Drive. Trying PSDrive fallback. $($_.Exception.Message)" "WARN"
+    }
+
+    try {
+        $psDriveName = $driveName.TrimEnd(":")
+        $psDrive = Get-PSDrive -Name $psDriveName -PSProvider FileSystem -ErrorAction Stop
+        $freeBytes = [int64]$psDrive.Free
+        $usedBytes = [int64]$psDrive.Used
+        $totalBytes = $freeBytes + $usedBytes
+        if ($totalBytes -le 0) {
+            return $null
+        }
+        $freePercent = [Math]::Round(($freeBytes / $totalBytes) * 100, 1)
+
+        return [pscustomobject]@{
+            Drive = $driveName
+            FreeBytes = $freeBytes
+            TotalBytes = $totalBytes
+            FreePercent = $freePercent
+        }
+    }
+    catch {
+        Write-Log "PSDrive lookup failed for $Drive. Trying DriveInfo fallback. $($_.Exception.Message)" "WARN"
+    }
+
+    try {
+        $root = "$($driveName.TrimEnd(':')):\"
+        $driveInfo = New-Object System.IO.DriveInfo($root)
+        if (-not $driveInfo.IsReady -or $driveInfo.TotalSize -le 0) {
+            return $null
+        }
+
+        $freeBytes = [int64]$driveInfo.AvailableFreeSpace
+        $totalBytes = [int64]$driveInfo.TotalSize
+        $freePercent = [Math]::Round(($freeBytes / $totalBytes) * 100, 1)
+
+        return [pscustomobject]@{
+            Drive = $driveName
+            FreeBytes = $freeBytes
+            TotalBytes = $totalBytes
+            FreePercent = $freePercent
+        }
+    }
+    catch {
+        Write-Log "Could not read drive information for $Drive. $($_.Exception.Message)" "WARN"
+        return $null
+    }
+}
+
+function Test-ShouldRunSmartGuard {
+    param(
+        [string]$Drive,
+        [int]$MinimumFreeGB,
+        [int]$MinimumFreePercent
+    )
+
+    $snapshot = Get-DriveSnapshot -Drive $Drive
+    if ($null -eq $snapshot) {
+        Write-Log "Smart guard could not read disk state, continuing with cleanup." "WARN"
+        return $true
+    }
+
+    $freeGB = [Math]::Round($snapshot.FreeBytes / 1GB, 2)
+    Write-Panel -Title "Disk Pressure" -Lines @(
+        ("{0}: {1} free of {2} ({3}%)" -f $snapshot.Drive, (Format-ByteSize $snapshot.FreeBytes), (Format-ByteSize $snapshot.TotalBytes), $snapshot.FreePercent),
+        ("threshold: below {0} GB or below {1}%" -f $MinimumFreeGB, $MinimumFreePercent)
+    )
+
+    if ($freeGB -lt $MinimumFreeGB) {
+        Write-Log ("Smart guard triggered: {0} has only {1} GB free." -f $snapshot.Drive, $freeGB)
+        return $true
+    }
+
+    if ($snapshot.FreePercent -lt $MinimumFreePercent) {
+        Write-Log ("Smart guard triggered: {0} has only {1}% free." -f $snapshot.Drive, $snapshot.FreePercent)
+        return $true
+    }
+
+    Write-Log ("Smart guard skipped cleanup: {0} still has {1} free ({2}%)." -f $snapshot.Drive, (Format-ByteSize $snapshot.FreeBytes), $snapshot.FreePercent)
+    return $false
 }
 
 function Test-SafeCleanupDirectory {
@@ -170,6 +350,8 @@ function Remove-OldContents {
 
     $cutoff = (Get-Date).AddDays(-[Math]::Abs($OlderThanDays))
     Write-Log "Cleaning $Label older than $OlderThanDays day(s): $Path"
+    $targetBytes = [int64]0
+    $targetItems = 0
 
     try {
         $files = Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue |
@@ -184,11 +366,17 @@ function Remove-OldContents {
         try {
             $length = [int64]$file.Length
             if ($DryRun) {
-                Write-Log "[dry-run] Would remove file: $($file.FullName)"
+                $targetBytes += $length
+                $targetItems += 1
+                $script:PotentialBytes += $length
+                $script:PotentialItems += 1
+                Write-Log "[dry-run] Would remove file: $($file.FullName)" -Detail
                 continue
             }
 
             Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop
+            $targetBytes += $length
+            $targetItems += 1
             $script:DeletedBytes += $length
             $script:DeletedItems += 1
         }
@@ -219,16 +407,28 @@ function Remove-OldContents {
             }
 
             if ($DryRun) {
-                Write-Log "[dry-run] Would remove empty folder: $($directory.FullName)"
+                $targetItems += 1
+                $script:PotentialItems += 1
+                Write-Log "[dry-run] Would remove empty folder: $($directory.FullName)" -Detail
                 continue
             }
 
             Remove-Item -LiteralPath $directory.FullName -Force -ErrorAction Stop
+            $targetItems += 1
             $script:DeletedItems += 1
         }
         catch {
             $script:FailedItems += 1
             Write-Log "Could not remove folder: $($directory.FullName). $($_.Exception.Message)" "WARN"
+        }
+    }
+
+    if ($targetItems -gt 0) {
+        if ($DryRun) {
+            Write-Log ("Would clean {0}: {1} item(s), about {2}." -f $Label, $targetItems, (Format-ByteSize $targetBytes))
+        }
+        else {
+            Write-Log ("Cleaned {0}: {1} item(s), about {2}." -f $Label, $targetItems, (Format-ByteSize $targetBytes))
         }
     }
 }
@@ -340,6 +540,61 @@ function Add-AppCacheTargets {
     Add-Target -Targets $Targets -Label "Telegram Desktop cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\cache") -Days $Days
     Add-Target -Targets $Targets -Label "Telegram Desktop media cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\media_cache") -Days $Days
     Add-Target -Targets $Targets -Label "Zoom webview cache" -Path (Join-Path $env:APPDATA "Zoom\data\WebviewCache") -Days $Days
+    Add-Target -Targets $Targets -Label "Microsoft Teams cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Microsoft Teams code cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Microsoft Teams GPU cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\GPUCache") -Days $Days
+    Add-WildcardTargets -Targets $Targets -Label "new Teams package cache" -Pattern (Join-Path $env:LOCALAPPDATA "Packages\MSTeams_*\LocalCache\Microsoft\MSTeams\Cache") -Days $Days
+}
+
+function Add-SystemCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Explorer thumbnail/icon cache" -Path (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Explorer") -Days $Days
+    Add-Target -Targets $Targets -Label "user crash dumps" -Path (Join-Path $env:LOCALAPPDATA "CrashDumps") -Days $Days
+    Add-Target -Targets $Targets -Label "Windows Prefetch" -Path (Join-Path $env:SystemRoot "Prefetch") -Days ([Math]::Max($Days, 7))
+    Add-Target -Targets $Targets -Label "NVIDIA DirectX cache" -Path (Join-Path $env:LOCALAPPDATA "NVIDIA\DXCache") -Days $Days
+    Add-Target -Targets $Targets -Label "NVIDIA OpenGL cache" -Path (Join-Path $env:LOCALAPPDATA "NVIDIA\GLCache") -Days $Days
+    Add-Target -Targets $Targets -Label "NVIDIA compute cache" -Path (Join-Path $env:LOCALAPPDATA "NVIDIA\ComputeCache") -Days $Days
+    Add-Target -Targets $Targets -Label "AMD DirectX cache" -Path (Join-Path $env:LOCALAPPDATA "AMD\DxCache") -Days $Days
+    Add-Target -Targets $Targets -Label "AMD OpenGL cache" -Path (Join-Path $env:LOCALAPPDATA "AMD\GLCache") -Days $Days
+}
+
+function Add-DeveloperCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "npm cache" -Path (Join-Path $env:LOCALAPPDATA "npm-cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Yarn cache" -Path (Join-Path $env:LOCALAPPDATA "Yarn\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Yarn data cache" -Path (Join-Path $env:LOCALAPPDATA "Yarn\Data\cache") -Days $Days
+    Add-Target -Targets $Targets -Label "pnpm store" -Path (Join-Path $env:LOCALAPPDATA "pnpm\store") -Days $Days
+    Add-Target -Targets $Targets -Label "pip cache" -Path (Join-Path $env:LOCALAPPDATA "pip\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Poetry cache" -Path (Join-Path $env:LOCALAPPDATA "pypoetry\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "NuGet http cache" -Path (Join-Path $env:LOCALAPPDATA "NuGet\v3-cache") -Days $Days
+    Add-Target -Targets $Targets -Label "NuGet plugins cache" -Path (Join-Path $env:LOCALAPPDATA "NuGet\plugins-cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Gradle build cache" -Path (Join-Path $env:USERPROFILE ".gradle\caches\build-cache-1") -Days $Days
+}
+
+function Add-GameCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    $programFilesX86 = ${env:ProgramFiles(x86)}
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+        Add-Target -Targets $Targets -Label "Steam http cache" -Path (Join-Path $programFilesX86 "Steam\appcache\httpcache") -Days $Days
+        Add-Target -Targets $Targets -Label "Steam shader cache" -Path (Join-Path $programFilesX86 "Steam\steamapps\shadercache") -Days $Days
+    }
+
+    Add-WildcardTargets -Targets $Targets -Label "Epic Games Launcher webcache" -Pattern (Join-Path $env:LOCALAPPDATA "EpicGamesLauncher\Saved\webcache*") -Days $Days
+    Add-Target -Targets $Targets -Label "Battle.net cache" -Path (Join-Path $env:ProgramData "Battle.net\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Battle.net local cache" -Path (Join-Path $env:LOCALAPPDATA "Battle.net\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "EA Desktop cache" -Path (Join-Path $env:LOCALAPPDATA "Electronic Arts\EA Desktop\cache") -Days $Days
 }
 
 function Add-ExtraPathTargets {
@@ -545,6 +800,14 @@ function Invoke-RecycleBinCleanup {
     }
 }
 
+if ($AggressiveSafe) {
+    $CleanBrowserCaches = $true
+    $CleanAppCaches = $true
+    $CleanSpotifyCache = $true
+    $CleanExtraPaths = $true
+    $CleanGameCaches = $true
+}
+
 if ($CleanAppCaches) {
     $CleanSpotifyCache = $true
 }
@@ -553,8 +816,22 @@ if ([string]::IsNullOrWhiteSpace($ExtraPathsFile)) {
     $ExtraPathsFile = Join-Path $PSScriptRoot "extra-cache-paths.txt"
 }
 
-Write-Log "Windows cleanup started. Deep=$Deep DryRun=$DryRun BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths ClearRecycleBin=$ClearRecycleBin"
-Write-Log "Log file: $LogFile"
+if ([string]::IsNullOrWhiteSpace($GuardDrive)) {
+    $GuardDrive = $env:SystemDrive
+}
+
+Write-Panel -Title "WinSweep" -Lines @(
+    ("mode: {0}{1}{2}" -f ($(if ($DryRun) { "preview" } else { "clean" })), ($(if ($Deep) { " + deep" } else { "" })), ($(if ($SmartGuard) { " + guard" } else { "" }))),
+    ("log: {0}" -f $LogFile)
+)
+
+Write-Log "Windows cleanup started. Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
+Write-Log "Log file: $LogFile" -Detail
+
+if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
+    Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")
+    exit 0
+}
 
 $targets = New-Object System.Collections.ArrayList
 Add-Target -Targets $targets -Label "user temp" -Path $env:TEMP -Days $TempOlderThanDays
@@ -562,6 +839,7 @@ Add-Target -Targets $targets -Label "local app temp" -Path (Join-Path $env:LOCAL
 Add-Target -Targets $targets -Label "Windows temp" -Path (Join-Path $env:SystemRoot "Temp") -Days $TempOlderThanDays
 Add-Target -Targets $targets -Label "Windows error reports" -Path (Join-Path $env:LOCALAPPDATA "Microsoft\Windows\WER") -Days $CacheOlderThanDays
 Add-Target -Targets $targets -Label "DirectX shader cache" -Path (Join-Path $env:LOCALAPPDATA "D3DSCache") -Days $CacheOlderThanDays
+Add-SystemCacheTargets -Targets $targets -Days $CacheOlderThanDays
 
 if ($Deep) {
     Add-Target -Targets $targets -Label "Windows Update download cache" -Path (Join-Path $env:SystemRoot "SoftwareDistribution\Download") -Days $CacheOlderThanDays
@@ -581,6 +859,14 @@ if ($CleanSpotifyCache -and -not $CleanAppCaches) {
 
 if ($CleanAppCaches) {
     Add-AppCacheTargets -Targets $targets -Days $CacheOlderThanDays
+}
+
+if ($CleanDeveloperCaches) {
+    Add-DeveloperCacheTargets -Targets $targets -Days $CacheOlderThanDays
+}
+
+if ($CleanGameCaches) {
+    Add-GameCacheTargets -Targets $targets -Days $CacheOlderThanDays
 }
 
 if ($CleanRegistry) {
@@ -627,7 +913,22 @@ catch {
     Write-Log "Could not rotate old logs. $($_.Exception.Message)" "WARN"
 }
 
-Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, failures: {2}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:FailedItems)
+if ($DryRun) {
+    Write-Log ("Preview finished. Would clean {0} item(s), about {1}, failures: {2}." -f $script:PotentialItems, (Format-ByteSize $script:PotentialBytes), $script:FailedItems)
+    Write-Panel -Title "Summary" -Lines @(
+        ("would clean: {0} item(s)" -f $script:PotentialItems),
+        ("estimated reclaim: {0}" -f (Format-ByteSize $script:PotentialBytes)),
+        ("failures: {0}" -f $script:FailedItems)
+    )
+}
+else {
+    Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, failures: {2}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:FailedItems)
+    Write-Panel -Title "Summary" -Lines @(
+        ("removed: {0} item(s)" -f $script:DeletedItems),
+        ("reclaimed: {0}" -f (Format-ByteSize $script:DeletedBytes)),
+        ("failures: {0}" -f $script:FailedItems)
+    )
+}
 
 if ($script:FailedItems -gt 0) {
     exit 1

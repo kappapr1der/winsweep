@@ -7,6 +7,8 @@ param(
     [switch]$SpotifyCache,
     [switch]$Registry,
     [switch]$ExtraPaths,
+    [switch]$DeveloperCaches,
+    [switch]$GameCaches,
     [switch]$RecycleBin
 )
 
@@ -27,8 +29,12 @@ $files = @(
     "install-scheduled-cleanup.ps1",
     "cleanup-now.bat",
     "cleanup-smart-now.bat",
+    "cleanup-emergency-now.bat",
+    "guard-check-now.bat",
     "cleanup-deep-now.bat",
     "cleanup-preview.bat",
+    "disk-space-report.ps1",
+    "disk-space-report.bat",
     "open-cleanup-logs.bat",
     "install-scheduled-cleanup.bat",
     "uninstall-scheduled-cleanup.bat",
@@ -84,6 +90,12 @@ if ($Registry) {
 }
 if ($ExtraPaths) {
     $scheduleArgs.ExtraPaths = $true
+}
+if ($DeveloperCaches) {
+    $scheduleArgs.DeveloperCaches = $true
+}
+if ($GameCaches) {
+    $scheduleArgs.GameCaches = $true
 }
 if ($RecycleBin) {
     $scheduleArgs.RecycleBin = $true

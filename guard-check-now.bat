@@ -1,0 +1,16 @@
+@echo off
+setlocal
+set "SCRIPT=%~dp0cleanup-windows.ps1"
+
+if not exist "%SCRIPT%" (
+    echo cleanup-windows.ps1 was not found next to this file.
+    pause
+    exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -SmartGuard -AggressiveSafe -CleanDeveloperCaches -CleanRegistry -MinFreeGB 35 -MinFreePercent 18 -TempOlderThanDays 0 -CacheOlderThanDays 1 %*
+set "EXITCODE=%ERRORLEVEL%"
+echo.
+echo Guard check finished with exit code %EXITCODE%.
+pause
+exit /b %EXITCODE%
