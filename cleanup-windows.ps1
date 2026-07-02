@@ -99,13 +99,13 @@ function Write-Log {
     }
 
     if ($Level -eq "INFO" -and -not $Detailed) {
-        if ($Message -like "Skipped missing path*") {
+        if ($Message.StartsWith("Skipped missing path")) {
             return
         }
-        if ($Message -like "[dry-run] Would remove*") {
+        if ($Message.StartsWith("[dry-run] Would remove")) {
             return
         }
-        if ($Message -like "[dry-run] Would export*") {
+        if ($Message.StartsWith("[dry-run] Would export")) {
             return
         }
     }
