@@ -48,7 +48,7 @@ catch {
 function Register-CleanupTask {
     param(
         [string]$Name,
-        [Microsoft.Management.Infrastructure.CimInstance]$Trigger,
+        [Microsoft.Management.Infrastructure.CimInstance[]]$Trigger,
         [string]$CleanupArgs,
         [string]$Description
     )
@@ -58,6 +58,36 @@ function Register-CleanupTask {
     $task = New-ScheduledTask -Action $action -Trigger $Trigger -Settings $settings -Principal $principal -Description $Description
     Register-ScheduledTask -TaskPath $taskPath -TaskName $Name -InputObject $task -Force | Out-Null
     Write-Host "Registered: $taskPath$Name"
+}
+
+function New-DailyGuardTriggers {
+    param(
+        [string]$StartAt,
+        [int]$EveryHours
+    )
+
+    if ($EveryHours -lt 1) {
+        $EveryHours = 1
+    }
+    if ($EveryHours -gt 24) {
+        $EveryHours = 24
+    }
+
+    try {
+        $startTime = ([datetime]::Parse($StartAt)).TimeOfDay
+    }
+    catch {
+        throw "GuardStart must look like HH:mm, for example 00:15."
+    }
+
+    $triggers = @()
+    for ($hourOffset = 0; $hourOffset -lt 24; $hourOffset += $EveryHours) {
+        $minutes = [int](($startTime.TotalMinutes + ($hourOffset * 60)) % 1440)
+        $at = ([datetime]::Today.AddMinutes($minutes)).ToString("HH:mm")
+        $triggers += New-ScheduledTaskTrigger -Daily -At $at -RandomDelay (New-TimeSpan -Minutes 15)
+    }
+
+    return $triggers
 }
 
 $optionalArgs = ""
@@ -86,17 +116,13 @@ if ($RecycleBin) {
     $optionalArgs += " -ClearRecycleBin"
 }
 
-$guardTrigger = New-ScheduledTaskTrigger -Daily -At $GuardStart -RandomDelay (New-TimeSpan -Minutes 15)
-$guardRepetition = New-CimInstance -ClassName MSFT_TaskRepetitionPattern -Namespace Root/Microsoft/Windows/TaskScheduler -ClientOnly
-$guardRepetition.Interval = "PT${GuardEveryHours}H"
-$guardRepetition.Duration = "P1D"
-$guardTrigger.Repetition = $guardRepetition
+$guardTriggers = New-DailyGuardTriggers -StartAt $GuardStart -EveryHours $GuardEveryHours
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -RandomDelay (New-TimeSpan -Minutes 5)
 $deepTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $DeepDay -At $DeepWeekly -RandomDelay (New-TimeSpan -Minutes 40)
 
 Register-CleanupTask `
     -Name "Pressure Guard" `
-    -Trigger $guardTrigger `
+    -Trigger $guardTriggers `
     -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 1$optionalArgs" `
     -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low."
 
