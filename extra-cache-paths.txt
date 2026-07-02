@@ -1,0 +1,12 @@
+# One extra cache/temp folder per line.
+# Lines starting with # are ignored.
+#
+# Examples:
+# D:\Temp
+# D:\Games\SomeLauncher\Cache
+# E:\Scratch\BuildCache
+#
+# Safety notes:
+# - Do not add a whole drive root like D:\
+# - Do not add broad folders like C:\Users, Documents, Desktop, Photos, Projects
+# - Add only folders that are clearly disposable cache/temp data
