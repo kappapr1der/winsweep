@@ -85,33 +85,12 @@ jobs:
             "- configurable ``winsweep-config.json``"
           ) | Set-Content -LiteralPath release-notes.md -Encoding UTF8
 
-      - name: Create or update GitHub release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $zip = "dist\WinSweep-v$env:WINSWEEP_VERSION.zip"
-          $isPrerelease = "${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.prerelease }}" -eq "true"
-
-          gh release view $env:WINSWEEP_TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:WINSWEEP_TAG $zip --clobber
-            gh release edit $env:WINSWEEP_TAG --title "WinSweep $env:WINSWEEP_TAG" --notes-file release-notes.md
-            if ($isPrerelease) {
-              gh release edit $env:WINSWEEP_TAG --prerelease
-            }
-          } else {
-            $args = @(
-              $env:WINSWEEP_TAG,
-              $zip,
-              "--title", "WinSweep $env:WINSWEEP_TAG",
-              "--notes-file", "release-notes.md"
-            )
-            if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-              $args += @("--target", "${{ github.sha }}")
-            }
-            if ($isPrerelease) {
-              $args += "--prerelease"
-            }
-            gh release create @args
-          }
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.WINSWEEP_TAG }}
+          target_commitish: ${{ github.sha }}
+          name: WinSweep ${{ env.WINSWEEP_TAG }}
+          body_path: release-notes.md
+          files: dist/WinSweep-v${{ env.WINSWEEP_VERSION }}.zip
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
