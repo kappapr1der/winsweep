@@ -44,6 +44,7 @@ winsweep-menu.bat
 - Install scheduled tasks.
 - Edit config.
 - Build release zip.
+- Publish GitHub release.
 
 ## Profiles
 
@@ -188,11 +189,11 @@ The repository includes `.github/workflows/release.yml`.
 Automatic release by tag:
 
 ```bash
-git tag v0.4.2
-git push origin v0.4.2
+git tag v0.4.3
+git push origin v0.4.3
 ```
 
-GitHub Actions will build `dist\WinSweep-v0.4.2.zip` and publish it on the
+GitHub Actions will build `dist\WinSweep-v0.4.3.zip` and publish it on the
 GitHub Releases page.
 
 Manual release:
@@ -201,9 +202,20 @@ Manual release:
 2. Go to `Actions`.
 3. Select `Release`.
 4. Click `Run workflow`.
-5. Enter a version such as `0.4.2`.
+5. Enter a version such as `0.4.3`.
 
 The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`.
+
+If GitHub Actions are unavailable, publish from your PC with GitHub CLI:
+
+```powershell
+gh auth login
+.\publish-release.ps1 -Version 0.4.3
+```
+
+Use `.\publish-release.ps1 -Version 0.4.3 -DryRun` to test the package step
+without creating a tag or GitHub Release. This local path requires Git for
+Windows and GitHub CLI. See `RELEASES.md` for details.
 
 ## Safety Notes
 

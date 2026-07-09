@@ -31,12 +31,17 @@ jobs:
       - name: Resolve version
         shell: pwsh
         run: |
+          $prerelease = "false"
+
           if ("${{ github.event_name }}" -eq "push") {
             $tag = "${{ github.ref_name }}"
             $version = $tag.TrimStart("v")
           } else {
-            $version = "${{ inputs.version }}".TrimStart("v")
+            $version = "${{ github.event.inputs.version }}".TrimStart("v")
             $tag = "v$version"
+            if ("${{ github.event.inputs.prerelease }}" -eq "true") {
+              $prerelease = "true"
+            }
           }
 
           if ([string]::IsNullOrWhiteSpace($version)) {
@@ -45,6 +50,7 @@ jobs:
 
           "WINSWEEP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "WINSWEEP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WINSWEEP_PRERELEASE=$prerelease" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Validate PowerShell scripts
         shell: pwsh
@@ -93,4 +99,4 @@ jobs:
           name: WinSweep ${{ env.WINSWEEP_TAG }}
           body_path: release-notes.md
           files: dist/WinSweep-v${{ env.WINSWEEP_VERSION }}.zip
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease }}
+          prerelease: ${{ env.WINSWEEP_PRERELEASE }}

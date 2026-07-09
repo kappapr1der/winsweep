@@ -56,6 +56,8 @@ $files = @(
     "open-cleanup-logs.bat",
     "build-release.ps1",
     "build-release.bat",
+    "publish-release.ps1",
+    "publish-release.bat",
     "install-scheduled-cleanup.ps1",
     "install-scheduled-cleanup.bat",
     "uninstall-scheduled-cleanup.bat",
@@ -63,7 +65,8 @@ $files = @(
     "setup-desktop-folder.bat",
     "extra-cache-paths.txt",
     "README.md",
-    "CONFIG.md"
+    "CONFIG.md",
+    "RELEASES.md"
 )
 
 foreach ($file in $files) {
