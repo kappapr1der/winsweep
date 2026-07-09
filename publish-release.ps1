@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$Version = "",
-    [string]$Repository = "",
+    [string]$Repository = "kappapr1der/winsweep",
+    [string]$Token = "",
+    [string]$TargetCommitish = "main",
     [switch]$Prerelease,
     [switch]$Draft,
     [switch]$SkipTagPush,
@@ -26,49 +28,146 @@ function Get-WinSweepVersion {
     throw "Could not read WinSweepVersion from cleanup-windows.ps1."
 }
 
-function Find-Tool {
-    param([string]$Name)
+function Get-PlainTextSecret {
+    param([Security.SecureString]$SecureValue)
 
-    $command = Get-Command $Name -ErrorAction SilentlyContinue
-    if (-not $command) {
-        if ($Name -eq "gh") {
-            throw "GitHub CLI (gh) was not found on PATH. Install it from https://cli.github.com/ and run: gh auth login"
-        }
-        if ($Name -eq "git") {
-            throw "Git was not found on PATH. Install Git for Windows or run with -SkipTagPush after creating/pushing the tag yourself."
-        }
-        throw "$Name was not found on PATH."
+    if (-not $SecureValue) {
+        return ""
     }
 
-    return $command.Source
-}
-
-function Invoke-External {
-    param(
-        [string]$FilePath,
-        [string[]]$Arguments
-    )
-
-    Write-Host "> $FilePath $($Arguments -join ' ')"
-    & $FilePath @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "$FilePath failed with exit code $LASTEXITCODE."
-    }
-}
-
-function Get-RepositoryFromGh {
-    param([string]$GhPath)
-
-    Push-Location $root
+    $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureValue)
     try {
-        $value = & $GhPath repo view --json nameWithOwner -q ".nameWithOwner"
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($value)) {
-            throw "Could not resolve GitHub repository. Pass -Repository owner/name."
-        }
-        return $value.Trim()
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
     }
     finally {
-        Pop-Location
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+}
+
+function Get-ReleaseToken {
+    param([string]$ExplicitToken)
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitToken)) {
+        return $ExplicitToken.Trim()
+    }
+
+    foreach ($name in @("WINSWEEP_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN")) {
+        $value = [Environment]::GetEnvironmentVariable($name, "Process")
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            Write-Host "Using token from $name."
+            return $value.Trim()
+        }
+    }
+
+    Write-Host "GitHub token was not found in WINSWEEP_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN."
+    Write-Host "Create a fine-grained token with repository Contents: Read and write, then paste it below."
+    $secure = Read-Host "GitHub token (hidden)" -AsSecureString
+    $plain = Get-PlainTextSecret -SecureValue $secure
+    if ([string]::IsNullOrWhiteSpace($plain)) {
+        throw "GitHub token is required to publish a release."
+    }
+
+    return $plain.Trim()
+}
+
+function Get-GitHubErrorText {
+    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $response = $ErrorRecord.Exception.Response
+    $status = ""
+    $body = ""
+
+    if ($response) {
+        try {
+            $status = " ($([int]$response.StatusCode) $($response.StatusDescription))"
+        }
+        catch {
+            $status = ""
+        }
+
+        try {
+            $stream = $response.GetResponseStream()
+            if ($stream) {
+                $reader = New-Object IO.StreamReader($stream)
+                $body = $reader.ReadToEnd()
+            }
+        }
+        catch {
+            $body = ""
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($body)) {
+        $body = $ErrorRecord.Exception.Message
+    }
+
+    return "$status $body"
+}
+
+function New-GitHubHeaders {
+    param([string]$AuthToken)
+
+    return @{
+        "Accept"               = "application/vnd.github+json"
+        "Authorization"        = "Bearer $AuthToken"
+        "X-GitHub-Api-Version" = "2022-11-28"
+        "User-Agent"           = "WinSweepReleasePublisher"
+    }
+}
+
+function Invoke-GitHubJson {
+    param(
+        [ValidateSet("GET", "POST", "PATCH", "DELETE")]
+        [string]$Method,
+        [string]$Uri,
+        [string]$AuthToken,
+        $Body = $null,
+        [switch]$AllowNotFound
+    )
+
+    $params = @{
+        Method      = $Method
+        Uri         = $Uri
+        Headers     = New-GitHubHeaders -AuthToken $AuthToken
+        ErrorAction = "Stop"
+    }
+
+    if ($null -ne $Body) {
+        $params.Body = ($Body | ConvertTo-Json -Depth 12)
+        $params.ContentType = "application/json"
+    }
+
+    try {
+        return Invoke-RestMethod @params
+    }
+    catch {
+        $response = $_.Exception.Response
+        if ($AllowNotFound -and $response -and [int]$response.StatusCode -eq 404) {
+            return $null
+        }
+
+        throw "GitHub API $Method $Uri failed$(Get-GitHubErrorText -ErrorRecord $_)"
+    }
+}
+
+function Invoke-GitHubUpload {
+    param(
+        [string]$Uri,
+        [string]$AuthToken,
+        [string]$FilePath
+    )
+
+    try {
+        return Invoke-RestMethod `
+            -Method Post `
+            -Uri $Uri `
+            -Headers (New-GitHubHeaders -AuthToken $AuthToken) `
+            -ContentType "application/zip" `
+            -InFile $FilePath `
+            -ErrorAction Stop
+    }
+    catch {
+        throw "GitHub release asset upload failed$(Get-GitHubErrorText -ErrorRecord $_)"
     }
 }
 
@@ -89,9 +188,18 @@ if ($Version -notmatch '^\d+\.\d+\.\d+([.-][A-Za-z0-9.-]+)?$') {
     throw "Version should look like 0.4.3 or v0.4.3. Got: $Version"
 }
 
+if ([string]::IsNullOrWhiteSpace($Repository) -or $Repository -notmatch '^[^/\s]+/[^/\s]+$') {
+    throw "Repository should look like owner/name. Got: $Repository"
+}
+
 $tag = "v$Version"
 $zipPath = Join-Path $root "dist\WinSweep-v$Version.zip"
 $notesPath = Join-Path $root "release-notes.md"
+$assetName = Split-Path -Leaf $zipPath
+
+if ($SkipTagPush) {
+    Write-Host "Note: -SkipTagPush is no longer needed. The GitHub Releases API creates or reuses the tag."
+}
 
 & $buildScript -Version $Version
 
@@ -102,7 +210,7 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
 @(
     "WinSweep $tag",
     "",
-    "Download WinSweep-v$Version.zip, extract it, then run setup-desktop-folder.bat or winsweep-menu.bat.",
+    "Download $assetName, extract it, then run setup-desktop-folder.bat or winsweep-menu.bat.",
     "",
     "Included:",
     "- Windows cleanup profiles and pressure guard",
@@ -118,68 +226,62 @@ Write-Host $zipPath
 Write-Host ""
 
 if ($DryRun) {
-    Write-Host "Dry run only. No tag or GitHub release was created."
-    Write-Host "Would publish $tag to GitHub Releases."
+    Write-Host "Dry run only. No GitHub release was created."
+    Write-Host "Would publish $tag to https://github.com/$Repository/releases using target $TargetCommitish."
     exit 0
 }
 
-$git = Find-Tool -Name "git"
-$gh = Find-Tool -Name "gh"
+$releaseToken = Get-ReleaseToken -ExplicitToken $Token
+$apiRoot = "https://api.github.com/repos/$Repository"
+$releaseByTagUri = "$apiRoot/releases/tags/$tag"
+$release = Invoke-GitHubJson -Method GET -Uri $releaseByTagUri -AuthToken $releaseToken -AllowNotFound
+$notes = Get-Content -LiteralPath $notesPath -Raw -Encoding UTF8
 
-if ([string]::IsNullOrWhiteSpace($Repository)) {
-    $Repository = Get-RepositoryFromGh -GhPath $gh
+if ($release) {
+    Write-Host "Release already exists: $tag"
+    $release = Invoke-GitHubJson `
+        -Method PATCH `
+        -Uri "$apiRoot/releases/$($release.id)" `
+        -AuthToken $releaseToken `
+        -Body @{
+            name       = "WinSweep $tag"
+            body       = $notes
+            draft      = [bool]$Draft
+            prerelease = [bool]$Prerelease
+        }
+}
+else {
+    Write-Host "Creating release: $tag"
+    $release = Invoke-GitHubJson `
+        -Method POST `
+        -Uri "$apiRoot/releases" `
+        -AuthToken $releaseToken `
+        -Body @{
+            tag_name               = $tag
+            target_commitish       = $TargetCommitish
+            name                   = "WinSweep $tag"
+            body                   = $notes
+            draft                  = [bool]$Draft
+            prerelease             = [bool]$Prerelease
+            generate_release_notes = $false
+        }
 }
 
-Push-Location $root
-try {
-    if (-not $SkipTagPush) {
-        $existingLocalTag = & $git tag --list $tag
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not list local tags."
-        }
-
-        if ([string]::IsNullOrWhiteSpace($existingLocalTag)) {
-            Invoke-External -FilePath $git -Arguments @("tag", $tag)
-        }
-        else {
-            Write-Host "Local tag already exists: $tag"
-        }
-
-        $existingRemoteTag = & $git ls-remote --tags origin "refs/tags/$tag"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not check remote tag $tag."
-        }
-
-        if ([string]::IsNullOrWhiteSpace($existingRemoteTag)) {
-            Invoke-External -FilePath $git -Arguments @("push", "origin", $tag)
-        }
-        else {
-            Write-Host "Remote tag already exists: $tag"
-        }
-    }
-
-    & $gh release view $tag --repo $Repository *> $null
-    $releaseExists = ($LASTEXITCODE -eq 0)
-
-    if ($releaseExists) {
-        Invoke-External -FilePath $gh -Arguments @("release", "upload", $tag, $zipPath, "--repo", $Repository, "--clobber")
-    }
-    else {
-        $args = @("release", "create", $tag, $zipPath, "--repo", $Repository, "--title", "WinSweep $tag", "--notes-file", $notesPath)
-        if ($Prerelease) {
-            $args += "--prerelease"
-        }
-        if ($Draft) {
-            $args += "--draft"
-        }
-
-        Invoke-External -FilePath $gh -Arguments $args
+$assets = Invoke-GitHubJson -Method GET -Uri "$apiRoot/releases/$($release.id)/assets?per_page=100" -AuthToken $releaseToken
+foreach ($asset in @($assets)) {
+    if ($asset.name -eq $assetName) {
+        Write-Host "Replacing existing asset: $assetName"
+        Invoke-GitHubJson -Method DELETE -Uri "$apiRoot/releases/assets/$($asset.id)" -AuthToken $releaseToken | Out-Null
     }
 }
-finally {
-    Pop-Location
-}
+
+$encodedAssetName = [Uri]::EscapeDataString($assetName)
+$uploadUri = "https://uploads.github.com/repos/$Repository/releases/$($release.id)/assets?name=$encodedAssetName"
+$uploadedAsset = Invoke-GitHubUpload -Uri $uploadUri -AuthToken $releaseToken -FilePath $zipPath
 
 Write-Host ""
 Write-Host "Release published:"
-Write-Host "https://github.com/$Repository/releases/tag/$tag"
+Write-Host $release.html_url
+Write-Host ""
+Write-Host "Asset:"
+Write-Host $uploadedAsset.browser_download_url

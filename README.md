@@ -206,16 +206,18 @@ Manual release:
 
 The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`.
 
-If GitHub Actions are unavailable, publish from your PC with GitHub CLI:
+If GitHub Actions are unavailable, publish from your PC with a free GitHub
+personal access token:
 
 ```powershell
-gh auth login
+$env:WINSWEEP_GITHUB_TOKEN = "paste_your_token_here"
 .\publish-release.ps1 -Version 0.4.3
+Remove-Item Env:\WINSWEEP_GITHUB_TOKEN
 ```
 
 Use `.\publish-release.ps1 -Version 0.4.3 -DryRun` to test the package step
-without creating a tag or GitHub Release. This local path requires Git for
-Windows and GitHub CLI. See `RELEASES.md` for details.
+without creating a GitHub Release. This local path does not require GitHub
+Actions, billing, Git, or GitHub CLI. See `RELEASES.md` for details.
 
 ## Safety Notes
 

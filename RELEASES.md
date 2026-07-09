@@ -19,26 +19,36 @@ be allowed to run Actions. If the run annotation says `The job was not started
 because your account is locked due to a billing issue`, fix the billing lock on
 GitHub first or use the local release path below.
 
-## Local release publish
+## Local release publish without Actions
 
-Use this when Actions are unavailable, or when you want to publish from your PC:
+Use this when Actions are unavailable, or when you want to publish from your PC
+without adding billing details to GitHub:
 
 ```powershell
-gh auth login
+$env:WINSWEEP_GITHUB_TOKEN = "paste_your_token_here"
 .\publish-release.ps1 -Version 0.4.3
+Remove-Item Env:\WINSWEEP_GITHUB_TOKEN
 ```
 
 Requirements:
 
-- Git for Windows
-- GitHub CLI from https://cli.github.com/
-- `gh auth login` completed for your GitHub account
+- a GitHub personal access token
+- repository access to `kappapr1der/winsweep`
+- repository permission `Contents: Read and write`
+
+Recommended token setup:
+
+1. Open GitHub `Settings`.
+2. Open `Developer settings`.
+3. Open `Personal access tokens`.
+4. Create a fine-grained token.
+5. Set repository access to `kappapr1der/winsweep`.
+6. Set `Contents` to `Read and write`.
 
 What it does:
 
 - builds `dist\WinSweep-v0.4.3.zip`;
-- creates the local tag `v0.4.3` if missing;
-- pushes the tag to `origin` if missing;
+- creates or reuses the GitHub tag `v0.4.3`;
 - creates or updates the GitHub Release asset.
 
 Useful options:
@@ -48,5 +58,8 @@ Useful options:
 .\publish-release.ps1 -Version 0.4.3 -Repository kappapr1der/winsweep
 .\publish-release.ps1 -Version 0.4.3 -Prerelease
 .\publish-release.ps1 -Version 0.4.3 -Draft
-.\publish-release.ps1 -Version 0.4.3 -SkipTagPush
+.\publish-release.ps1 -Version 0.4.3 -TargetCommitish main
 ```
+
+If `WINSWEEP_GITHUB_TOKEN`, `GITHUB_TOKEN`, or `GH_TOKEN` is not set, the script
+will ask for the token with hidden input.
