@@ -15,6 +15,7 @@ param(
     [switch]$ClearRecycleBin,
     [switch]$Detailed,
     [switch]$Quiet,
+    [switch]$OpenReport,
     [int]$MinFreeGB = 35,
     [int]$MinFreePercent = 18,
     [string]$GuardDrive = "",
@@ -31,7 +32,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
-$script:WinSweepVersion = "0.3.0"
+$script:WinSweepVersion = "0.4.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -39,6 +40,8 @@ $script:PotentialItems = 0
 $script:FailedItems = 0
 $script:TargetResults = New-Object System.Collections.ArrayList
 $script:CloseHints = @{}
+$script:PreflightResults = New-Object System.Collections.ArrayList
+$script:HtmlReportPath = ""
 $script:ConfigSource = ""
 $script:ConfigLoadWarning = ""
 $script:CliParameters = @{}
@@ -496,6 +499,225 @@ function Show-CloseHints {
 
     $lines = @($script:CloseHints.Keys | Sort-Object)
     Write-Panel -Title "Retry Tips" -Lines $lines
+}
+
+function Add-PreflightResult {
+    param(
+        [string]$App,
+        [string[]]$Processes,
+        [string]$Reason
+    )
+
+    $running = @()
+    foreach ($processName in $Processes) {
+        $found = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+        foreach ($process in $found) {
+            $running += $process.ProcessName
+        }
+    }
+
+    $running = @($running | Sort-Object -Unique)
+    if ($running.Count -eq 0) {
+        return
+    }
+
+    [void]$script:PreflightResults.Add([pscustomobject]@{
+        App = $App
+        Processes = ($running -join ", ")
+        Reason = $Reason
+    })
+
+    $script:CloseHints["Close $App before cleanup to free more cache files."] = $true
+}
+
+function Invoke-PreflightCheck {
+    if ($Quiet) {
+        return
+    }
+
+    if ($CleanSpotifyCache -or $CleanAppCaches -or $AggressiveSafe) {
+        Add-PreflightResult -App "Spotify" -Processes @("Spotify") -Reason "Spotify Store/classic cache can be locked while it is running."
+    }
+    if ($CleanAppCaches -or $AggressiveSafe) {
+        Add-PreflightResult -App "Telegram Desktop" -Processes @("Telegram") -Reason "Telegram media cache may stay locked while Telegram is open."
+        Add-PreflightResult -App "Discord" -Processes @("Discord") -Reason "Discord cache and GPU cache may stay locked."
+        Add-PreflightResult -App "Slack" -Processes @("Slack") -Reason "Slack cache may stay locked."
+        Add-PreflightResult -App "Microsoft Teams" -Processes @("Teams", "ms-teams") -Reason "Teams cache may stay locked."
+    }
+    if ($CleanBrowserCaches -or $AggressiveSafe) {
+        Add-PreflightResult -App "browsers" -Processes @("chrome", "msedge", "brave", "firefox") -Reason "Browser cache cleanup is cleaner when browsers are closed."
+    }
+    if ($CleanGameCaches -or $AggressiveSafe) {
+        Add-PreflightResult -App "Steam" -Processes @("steam", "steamwebhelper") -Reason "Steam shader/http cache may be active."
+        Add-PreflightResult -App "Epic Games Launcher" -Processes @("EpicGamesLauncher") -Reason "Epic webcache may be active."
+        Add-PreflightResult -App "Battle.net" -Processes @("Battle.net", "Agent") -Reason "Battle.net cache may be active."
+        Add-PreflightResult -App "Riot Client" -Processes @("RiotClientServices", "RiotClientUx", "RiotClientUxRender") -Reason "Riot client cache/logs may be active."
+        Add-PreflightResult -App "Ubisoft Connect" -Processes @("UbisoftConnect", "upc") -Reason "Ubisoft launcher cache/logs may be active."
+        Add-PreflightResult -App "Rockstar Launcher" -Processes @("Launcher", "RockstarService") -Reason "Rockstar launcher cache/logs may be active."
+    }
+
+    if ($script:PreflightResults.Count -eq 0) {
+        Write-Log "Preflight: no tracked cache-heavy apps appear to be open." -Detail
+        return
+    }
+
+    $lines = @()
+    foreach ($item in $script:PreflightResults) {
+        $lines += ("{0}: {1}" -f $item.App, $item.Reason)
+        Write-Log ("Preflight open app: {0}; processes: {1}; reason: {2}" -f $item.App, $item.Processes, $item.Reason) -Detail
+    }
+
+    Write-Panel -Title "Preflight" -Lines $lines
+}
+
+function ConvertTo-HtmlText {
+    param([string]$Text)
+
+    if ($null -eq $Text) {
+        return ""
+    }
+
+    return [System.Net.WebUtility]::HtmlEncode($Text)
+}
+
+function Get-HtmlRows {
+    param($Rows)
+
+    $html = New-Object System.Text.StringBuilder
+    foreach ($row in $Rows) {
+        [void]$html.AppendLine("<tr><td>$(ConvertTo-HtmlText $row.Label)</td><td>$(ConvertTo-HtmlText (Format-ByteSize ([int64]$row.Bytes)))</td><td>$($row.Items)</td><td>$(ConvertTo-HtmlText $row.Category)</td><td>$(ConvertTo-HtmlText $row.Risk)</td><td>$(ConvertTo-HtmlText $row.Status)</td><td>$(ConvertTo-HtmlText $row.Path)</td></tr>")
+    }
+    return $html.ToString()
+}
+
+function Write-HtmlReport {
+    param(
+        [string]$Mode,
+        $Before,
+        $After,
+        [string[]]$SummaryLines
+    )
+
+    try {
+        $reportDir = Join-Path $LogDir "Reports"
+        New-Item -ItemType Directory -Path $reportDir -Force -ErrorAction Stop | Out-Null
+        $reportPath = Join-Path $reportDir ("report-$LogStamp.html")
+        $latestPath = Join-Path $reportDir "latest.html"
+
+        $rows = @($script:TargetResults | Where-Object { $_.Bytes -gt 0 } | Sort-Object Bytes -Descending)
+        $allRows = @($script:TargetResults | Sort-Object Bytes -Descending)
+        $totalBytes = [int64]0
+        $totalItems = 0
+        foreach ($row in $rows) {
+            $totalBytes += [int64]$row.Bytes
+            $totalItems += [int]$row.Items
+        }
+
+        $preflightHtml = if ($script:PreflightResults.Count -gt 0) {
+            (($script:PreflightResults | ForEach-Object { "<li><strong>$(ConvertTo-HtmlText $_.App)</strong>: $(ConvertTo-HtmlText $_.Reason) <span>$(ConvertTo-HtmlText $_.Processes)</span></li>" }) -join "`n")
+        }
+        else {
+            "<li>No tracked cache-heavy apps were detected as open.</li>"
+        }
+
+        $tipsHtml = if ($script:CloseHints.Count -gt 0) {
+            (($script:CloseHints.Keys | Sort-Object | ForEach-Object { "<li>$(ConvertTo-HtmlText $_)</li>" }) -join "`n")
+        }
+        else {
+            "<li>No retry tips for this run.</li>"
+        }
+
+        $summaryHtml = (($SummaryLines | ForEach-Object { "<li>$(ConvertTo-HtmlText $_)</li>" }) -join "`n")
+        $topRowsHtml = Get-HtmlRows -Rows ($rows | Select-Object -First 15)
+        $allRowsHtml = Get-HtmlRows -Rows $allRows
+        $generated = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        $diskBefore = if ($null -ne $Before) { "{0} ({1}%)" -f (Format-ByteSize ([int64]$Before.FreeBytes)), $Before.FreePercent } else { "unknown" }
+        $diskAfter = if ($null -ne $After) { "{0} ({1}%)" -f (Format-ByteSize ([int64]$After.FreeBytes)), $After.FreePercent } else { "unknown" }
+
+        $html = @"
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>WinSweep Report</title>
+  <style>
+    :root { color-scheme: light; font-family: Segoe UI, Arial, sans-serif; }
+    body { margin: 0; background: #f4f6f8; color: #17212b; }
+    main { max-width: 1180px; margin: 0 auto; padding: 28px; }
+    header { background: #0f1720; color: white; padding: 24px 28px; border-radius: 8px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    h2 { margin: 28px 0 12px; font-size: 19px; }
+    .meta { color: #c7d1dc; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
+    .metric { background: white; border: 1px solid #d9e0e7; border-radius: 8px; padding: 14px; }
+    .metric b { display: block; font-size: 22px; margin-top: 5px; }
+    section { background: white; border: 1px solid #d9e0e7; border-radius: 8px; padding: 18px; margin-top: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #edf0f3; vertical-align: top; }
+    th { background: #f8fafc; color: #3b4652; position: sticky; top: 0; }
+    code { background: #edf2f7; padding: 2px 5px; border-radius: 4px; }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 5px 0; }
+    span { color: #657282; }
+    .empty { color: #657282; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>WinSweep Report</h1>
+    <div class="meta">Generated $generated | mode: $(ConvertTo-HtmlText $Mode) | profile: $(ConvertTo-HtmlText (Get-ProfileName)) | version: $script:WinSweepVersion</div>
+  </header>
+  <div class="grid">
+    <div class="metric">Selected reclaim<b>$(ConvertTo-HtmlText (Format-ByteSize $totalBytes))</b></div>
+    <div class="metric">Selected items<b>$totalItems</b></div>
+    <div class="metric">Disk before<b>$(ConvertTo-HtmlText $diskBefore)</b></div>
+    <div class="metric">Disk after<b>$(ConvertTo-HtmlText $diskAfter)</b></div>
+  </div>
+  <section>
+    <h2>Summary</h2>
+    <ul>$summaryHtml</ul>
+    <p>Log file: <code>$(ConvertTo-HtmlText $LogFile)</code></p>
+  </section>
+  <section>
+    <h2>Preflight</h2>
+    <ul>$preflightHtml</ul>
+  </section>
+  <section>
+    <h2>Top Results</h2>
+    <table>
+      <thead><tr><th>Target</th><th>Size</th><th>Items</th><th>Category</th><th>Risk</th><th>Status</th><th>Path</th></tr></thead>
+      <tbody>$topRowsHtml</tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Retry Tips</h2>
+    <ul>$tipsHtml</ul>
+  </section>
+  <section>
+    <h2>All Targets</h2>
+    <table>
+      <thead><tr><th>Target</th><th>Size</th><th>Items</th><th>Category</th><th>Risk</th><th>Status</th><th>Path</th></tr></thead>
+      <tbody>$allRowsHtml</tbody>
+    </table>
+  </section>
+</main>
+</body>
+</html>
+"@
+
+        Set-Content -LiteralPath $reportPath -Value $html -Encoding UTF8 -ErrorAction Stop
+        Copy-Item -LiteralPath $reportPath -Destination $latestPath -Force -ErrorAction Stop
+        $script:HtmlReportPath = $reportPath
+        Write-Log "HTML report saved: $reportPath"
+
+        if ($OpenReport -and -not $Quiet) {
+            Start-Process -FilePath $reportPath -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Log "Could not write HTML report. $($_.Exception.Message)" "WARN"
+    }
 }
 
 function Get-DriveSnapshot {
@@ -1269,6 +1491,8 @@ if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumF
 
 $startSnapshot = Get-DriveSnapshot -Drive $GuardDrive
 
+Invoke-PreflightCheck
+
 $targets = New-Object System.Collections.ArrayList
 Add-Target -Targets $targets -Label "user temp" -Path $env:TEMP -Days $TempOlderThanDays
 Add-Target -Targets $targets -Label "local app temp" -Path (Join-Path $env:LOCALAPPDATA "Temp") -Days $TempOlderThanDays
@@ -1362,6 +1586,10 @@ if ($DryRun) {
         ("failures: {0}" -f $script:FailedItems)
     )
     $summaryLines += $diskSummaryLines
+    Write-HtmlReport -Mode $previewName -Before $startSnapshot -After $endSnapshot -SummaryLines $summaryLines
+    if (-not [string]::IsNullOrWhiteSpace($script:HtmlReportPath)) {
+        $summaryLines += ("html report: {0}" -f $script:HtmlReportPath)
+    }
     Write-Panel -Title "Summary" -Lines $summaryLines
 }
 else {
@@ -1373,6 +1601,10 @@ else {
         ("failures: {0}" -f $script:FailedItems)
     )
     $summaryLines += $diskSummaryLines
+    Write-HtmlReport -Mode "clean" -Before $startSnapshot -After $endSnapshot -SummaryLines $summaryLines
+    if (-not [string]::IsNullOrWhiteSpace($script:HtmlReportPath)) {
+        $summaryLines += ("html report: {0}" -f $script:HtmlReportPath)
+    }
     Write-Panel -Title "Summary" -Lines $summaryLines
 }
 

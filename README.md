@@ -1,169 +1,197 @@
 # WinSweep
 
-Windows cleanup kit для ситуации, когда системный диск снова внезапно стал красным.
+WinSweep is a Windows cleanup toolkit for cache-heavy machines: Spotify,
+Telegram, browsers, game launchers, GPU shader caches, Windows temp folders,
+developer caches, safe recent-history registry cleanup, and scheduled pressure
+guards.
 
-## Быстрый запуск
+The default rule is simple: clean disposable cache and temp data, not personal
+files. WinSweep does not touch Downloads, Desktop, Documents, photos, videos,
+projects, browser passwords, cookies, game saves, or whole application folders.
 
-1. Запусти `setup-desktop-folder.bat` от имени администратора.
-   Он создаст `Desktop\WinSweep`, скопирует туда батники и поставит задачи в Планировщик.
-2. Запусти `disk-space-report.bat`, если хочешь понять, что именно съело диск.
-3. Запусти `cleanup-preview.bat`, если хочешь preview без удаления.
-4. Запусти `cleanup-smart-now.bat`, если хочешь ручную safe-чистку прямо сейчас.
-5. Запусти `cleanup-emergency-now.bat`, если на `C:` уже осталось совсем мало места.
+## Quick Start
 
-## Планировщик
+Run this once as administrator:
 
-`install-scheduled-cleanup.bat` больше не ставит тупую чистку строго в полдень и вечером. Теперь модель такая:
+```bat
+setup-desktop-folder.bat
+```
 
-- `Pressure Guard` - стартует около `00:15` и повторяется каждые 3 часа.
-- `Startup Guard` - проверяет диск через несколько минут после входа в Windows.
-- `Deep Weekly` - каждое воскресенье около `03:20`.
+It creates:
 
-`Pressure Guard` и `Startup Guard` сначала смотрят на системный диск. Чистка запускается только если свободного места меньше `35 GB` или меньше `18%`.
+```text
+Desktop\WinSweep
+```
 
-Задачи лежат здесь:
+Then start:
+
+```bat
+winsweep-menu.bat
+```
+
+## Menu
+
+`winsweep-menu.bat` is the easiest entry point:
+
+- Scan results: broad scan, no deletion, opens an HTML report.
+- Safe cleanup: normal safe cache cleanup.
+- Gaming cleanup: game launchers, browser/app caches, GPU shader caches.
+- Deep cleanup: administrator cleanup with Windows component cleanup.
+- Emergency cleanup: more aggressive safe cleanup for low disk space.
+- Disk analyzer lite: top large folders on fixed drives, no deletion.
+- Cleanup history: recent WinSweep runs and reclaimed size.
+- Open latest HTML report.
+- Install scheduled tasks.
+- Edit config.
+- Build release zip.
+
+## Profiles
+
+PowerShell examples:
+
+```powershell
+.\cleanup-windows.ps1 -Analyze -Profile Emergency -OpenReport
+.\cleanup-windows.ps1 -Profile Safe -OpenReport
+.\cleanup-windows.ps1 -Profile Gaming -OpenReport
+.\cleanup-windows.ps1 -Profile Deep
+```
+
+Profiles:
+
+- `Safe`: safe temp, browser, app, Spotify, game, and graphics caches.
+- `Gaming`: game launchers plus short-age app/browser/GPU cache cleanup.
+- `Deep`: safe cleanup plus developer caches, registry MRU cleanup, DISM.
+- `Emergency`: deep safe cleanup with zero-day temp/cache age thresholds.
+
+## Config
+
+WinSweep reads `winsweep-config.json` from the same folder as
+`cleanup-windows.ps1`.
+
+Command-line flags win over config values. This keeps old `.bat` launchers and
+scheduled tasks predictable.
+
+Useful settings:
+
+- `defaultProfile`
+- `thresholds.minFreeGB`
+- `thresholds.minFreePercent`
+- `thresholds.tempOlderThanDays`
+- `thresholds.cacheOlderThanDays`
+- `features.developerCaches`
+- `features.gameCaches`
+- `features.clearRecycleBin`
+- `schedule.guardEveryHours`
+- `schedule.deepWeekly`
+
+See `CONFIG.md` for the compact field guide.
+
+## Scheduled Tasks
+
+Run as administrator:
+
+```bat
+install-scheduled-cleanup.bat
+```
+
+The installer creates tasks under:
 
 ```text
 Task Scheduler Library\Codex Windows Cleanup
 ```
 
-Пороги можно поменять при установке:
+Tasks:
 
-```bat
-install-scheduled-cleanup.bat -LowFreeGB 50 -LowFreePercent 20 -GuardEveryHours 2
-```
+- `Pressure Guard`: checks disk pressure every few hours and cleans only when
+  free space is below the configured threshold.
+- `Startup Guard`: checks shortly after logon.
+- `Deep Weekly`: weekly deeper cleanup.
 
-## Что чистит
-
-Базово:
-
-- `%TEMP%` текущего пользователя.
-- `%LOCALAPPDATA%\Temp`.
-- `C:\Windows\Temp`.
-- Windows Error Reporting.
-- DirectX shader cache.
-- Explorer thumbnail/icon cache.
-- пользовательские crash dumps.
-- старый Prefetch, но не младше 7 дней.
-- NVIDIA/AMD shader caches.
-
-В aggressive-safe режиме:
-
-- кеши Edge, Chrome, Brave, Firefox.
-- Spotify cache, включая classic и Microsoft Store версии.
-- Discord, Slack, Telegram Desktop, Zoom, Microsoft Teams.
-- Steam shader/http cache, Epic Games Launcher webcache, Battle.net cache, EA Desktop cache.
-- дополнительные cache/temp папки из `extra-cache-paths.txt`.
-
-С `-CleanDeveloperCaches`:
-
-- npm, Yarn, pnpm.
-- pip, Poetry.
-- NuGet http/plugins cache.
-- Gradle build cache.
-
-С `-Deep`:
-
-- Windows Update download cache.
-- Delivery Optimization cache.
-- `DISM /Online /Cleanup-Image /StartComponentCleanup`.
-
-С `-CleanRegistry`:
-
-- Run dialog history.
-- Recent documents history.
-- Explorer typed paths.
-- Explorer search box history.
-- Open/save dialog MRU.
-- Jump Lists и recent shortcuts.
-
-Перед удалением registry-ключей сохраняются `.reg`-бэкапы.
-
-## Что не трогает
-
-- `Downloads`, `Desktop`, `Documents`, фото, видео, проекты.
-- пароли, cookies, сессии браузера.
-- папки программ целиком.
-- игровые сохранения.
-- `WinSxS` руками.
-- COM, драйверы, uninstall-записи и ассоциации файлов.
-- корзину, если явно не передать `-ClearRecycleBin`.
-
-## Команды
-
-Preview без удаления:
-
-```bat
-cleanup-preview.bat
-```
-
-Ручная safe-чистка:
-
-```bat
-cleanup-smart-now.bat
-```
-
-Проверка как в Планировщике:
-
-```bat
-guard-check-now.bat
-```
-
-Аварийная глубокая safe-чистка:
-
-```bat
-cleanup-emergency-now.bat
-```
-
-Отчёт по дискам и крупным папкам:
-
-```bat
-disk-space-report.bat
-```
-
-Открыть логи:
-
-```bat
-open-cleanup-logs.bat
-```
-
-## Другие диски
-
-Для D/E/F и любых соседних дисков добавь disposable cache/temp папки в:
+Default thresholds:
 
 ```text
-extra-cache-paths.txt
+below 35 GB free OR below 18% free
 ```
 
-Пример:
+## HTML Reports
+
+Manual scan/cleanup launchers can create an HTML report under:
 
 ```text
-D:\Temp
-D:\Games\SomeLauncher\Cache
-E:\Scratch\BuildCache
+C:\ProgramData\CodexWindowsCleanup\Logs\Reports
 ```
 
-Не добавляй туда корень диска, `C:\Users`, `Documents`, `Desktop`, фото, проекты и любые папки, где могут быть единственные копии файлов.
-
-## Логи
-
-Основной путь:
+If ProgramData is unavailable, WinSweep falls back to:
 
 ```text
-C:\ProgramData\CodexWindowsCleanup\Logs
+%TEMP%\CodexWindowsCleanup\Logs\Reports
 ```
 
-Если туда нельзя писать без администратора, WinSweep автоматически использует:
+Open the latest report with:
+
+```bat
+open-latest-report.bat
+```
+
+Reports include summary metrics, top cleanup targets, preflight warnings,
+retry tips, and all scanned targets.
+
+## Preflight
+
+Before cleanup, WinSweep checks whether common cache-heavy apps are open:
+
+- Spotify
+- Telegram Desktop
+- Discord
+- Slack
+- Teams
+- browsers
+- Steam
+- Epic Games Launcher
+- Battle.net
+- Riot Client
+- Ubisoft Connect
+- Rockstar Launcher
+
+It does not kill processes. It only warns you when closing an app could free
+more cache files.
+
+## Disk Analyzer Lite
+
+Run:
+
+```bat
+disk-analyzer-lite.bat
+```
+
+It scans fixed drives and shows the largest top-level folders and user
+hotspots. It never deletes files.
+
+## Release Zip
+
+Run:
+
+```bat
+build-release.bat
+```
+
+It creates:
 
 ```text
-%TEMP%\CodexWindowsCleanup\Logs
+dist\WinSweep-vX.Y.Z.zip
 ```
 
-## Практичный порядок
+## Safety Notes
 
-Если на `C:` осталось около 20 GB из 200+:
+WinSweep intentionally avoids:
 
-1. Запусти `disk-space-report.bat`.
-2. Запусти `cleanup-preview.bat`.
-3. Если preview выглядит нормально, запусти `cleanup-emergency-now.bat`.
-4. Потом запусти `setup-desktop-folder.bat`, чтобы поставить новый `Pressure Guard`.
+- Downloads, Desktop, Documents, photos, videos, projects.
+- Browser passwords, cookies, sessions.
+- Whole application folders.
+- Game saves.
+- Manual deletion inside `WinSxS`.
+- COM, drivers, uninstall records, file associations.
+- Recycle Bin unless `-ClearRecycleBin` or config enables it.
+
+Registry cleanup is limited to MRU/recent-history style keys and creates `.reg`
+backups before deletion.

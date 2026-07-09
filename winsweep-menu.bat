@@ -30,10 +30,13 @@ echo 2. Safe cleanup
 echo 3. Gaming cleanup
 echo 4. Deep cleanup (admin)
 echo 5. Emergency cleanup (admin)
-echo 6. Disk space report
-echo 7. Open logs
-echo 8. Install scheduled tasks (admin)
-echo 9. Edit config
+echo 6. Disk analyzer lite
+echo 7. Cleanup history
+echo 8. Open latest HTML report
+echo 9. Open logs
+echo A. Install scheduled tasks (admin)
+echo B. Edit config
+echo R. Build release zip
 echo Q. Quit
 echo.
 set "PICK="
@@ -42,17 +45,17 @@ set /p "PICK=Choose: "
 if /i "%PICK%"=="q" exit /b 0
 
 if "%PICK%"=="1" (
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Analyze -Profile Emergency
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Analyze -Profile Emergency -OpenReport
     goto after
 )
 
 if "%PICK%"=="2" (
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Safe
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Safe -OpenReport
     goto after
 )
 
 if "%PICK%"=="3" (
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Gaming
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Gaming -OpenReport
     goto after
 )
 
@@ -67,22 +70,37 @@ if "%PICK%"=="5" (
 )
 
 if "%PICK%"=="6" (
-    call "%~dp0disk-space-report.bat"
+    call "%~dp0disk-analyzer-lite.bat"
     goto menu
 )
 
 if "%PICK%"=="7" (
-    call "%~dp0open-cleanup-logs.bat"
+    call "%~dp0show-cleanup-history.bat"
     goto menu
 )
 
 if "%PICK%"=="8" (
-    call "%~dp0install-scheduled-cleanup.bat"
+    call "%~dp0open-latest-report.bat"
     goto menu
 )
 
 if "%PICK%"=="9" (
+    call "%~dp0open-cleanup-logs.bat"
+    goto menu
+)
+
+if /i "%PICK%"=="a" (
+    call "%~dp0install-scheduled-cleanup.bat"
+    goto menu
+)
+
+if /i "%PICK%"=="b" (
     start "" notepad.exe "%CONFIG%"
+    goto menu
+)
+
+if /i "%PICK%"=="r" (
+    call "%~dp0build-release.bat"
     goto menu
 )
 

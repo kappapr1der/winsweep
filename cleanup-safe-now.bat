@@ -8,7 +8,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Safe %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Safe -OpenReport %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Safe cleanup finished with exit code %EXITCODE%.

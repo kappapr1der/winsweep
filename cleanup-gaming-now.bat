@@ -8,7 +8,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Gaming %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Profile Gaming -OpenReport %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Gaming cleanup finished with exit code %EXITCODE%.

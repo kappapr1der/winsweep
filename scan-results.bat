@@ -8,7 +8,7 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Analyze -Profile Emergency %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Analyze -Profile Emergency -OpenReport %*
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 echo Scan finished with exit code %EXITCODE%.
