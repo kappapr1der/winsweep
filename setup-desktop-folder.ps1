@@ -27,8 +27,11 @@ New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
 $files = @(
     "cleanup-windows.ps1",
     "install-scheduled-cleanup.ps1",
+    "scan-results.bat",
     "cleanup-now.bat",
+    "cleanup-safe-now.bat",
     "cleanup-smart-now.bat",
+    "cleanup-gaming-now.bat",
     "cleanup-emergency-now.bat",
     "guard-check-now.bat",
     "cleanup-deep-now.bat",

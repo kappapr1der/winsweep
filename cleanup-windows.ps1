@@ -2,6 +2,7 @@
 param(
     [switch]$Deep,
     [switch]$DryRun,
+    [switch]$Analyze,
     [switch]$SmartGuard,
     [switch]$AggressiveSafe,
     [switch]$CleanBrowserCaches,
@@ -20,6 +21,8 @@ param(
     [int]$TempOlderThanDays = 2,
     [int]$CacheOlderThanDays = 7,
     [int]$LogRetentionDays = 30,
+    [ValidateSet("", "Safe", "Gaming", "Deep", "Emergency")]
+    [string]$Profile = "",
     [string]$ExtraPathsFile = "",
     [string]$LogDir = ""
 )
@@ -27,12 +30,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
-$script:WinSweepVersion = "0.1.5"
+$script:WinSweepVersion = "0.2.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
 $script:PotentialItems = 0
 $script:FailedItems = 0
+$script:TargetResults = New-Object System.Collections.ArrayList
+$script:CloseHints = @{}
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -158,6 +163,188 @@ function Format-ByteSize {
     return "$Bytes bytes"
 }
 
+function Get-TargetCategory {
+    param([string]$Label)
+
+    $text = $Label.ToLowerInvariant()
+    if ($text -match "chrome|edge|brave|firefox|browser") {
+        return "browser"
+    }
+    if ($text -match "spotify|discord|telegram|slack|teams|zoom") {
+        return "app"
+    }
+    if ($text -match "steam|epic|battle\.net|ea desktop|ubisoft|riot|rockstar|game") {
+        return "game"
+    }
+    if ($text -match "npm|yarn|pnpm|pip|poetry|nuget|gradle") {
+        return "developer"
+    }
+    if ($text -match "nvidia|amd|directx|opengl|shader") {
+        return "graphics"
+    }
+    if ($text -match "windows|prefetch|explorer|crash|temp|delivery|update") {
+        return "windows"
+    }
+    if ($text -match "extra") {
+        return "extra"
+    }
+    return "cache"
+}
+
+function Get-TargetRisk {
+    param([string]$Category)
+
+    switch ($Category) {
+        "developer" { return "medium" }
+        "game" { return "medium" }
+        "extra" { return "custom" }
+        default { return "safe" }
+    }
+}
+
+function Add-CleanupResult {
+    param(
+        [string]$Label,
+        [string]$Path,
+        [int]$Days,
+        [int64]$Bytes,
+        [int]$Items,
+        [int]$Failures,
+        [string]$Status
+    )
+
+    $category = Get-TargetCategory -Label $Label
+    [void]$script:TargetResults.Add([pscustomobject]@{
+        Label = $Label
+        Path = $Path
+        Days = $Days
+        Bytes = $Bytes
+        Items = $Items
+        Failures = $Failures
+        Status = $Status
+        Category = $category
+        Risk = (Get-TargetRisk -Category $category)
+    })
+}
+
+function Get-CloseHint {
+    param([string]$Label)
+
+    $text = $Label.ToLowerInvariant()
+    if ($text -match "spotify") {
+        return "Close Spotify and run the same WinSweep action again."
+    }
+    if ($text -match "telegram") {
+        return "Close Telegram Desktop and run the same WinSweep action again."
+    }
+    if ($text -match "chrome|edge|brave|firefox|browser") {
+        return "Close browsers before browser-cache cleanup."
+    }
+    if ($text -match "discord|slack|teams|zoom") {
+        return "Close chat/meeting apps before app-cache cleanup."
+    }
+    if ($text -match "steam|epic|battle\.net|ea desktop|ubisoft|riot|rockstar") {
+        return "Close game launchers before gaming-cache cleanup."
+    }
+    if ($text -match "nvidia|amd|directx|opengl|shader") {
+        return "Close games and GPU-heavy apps before graphics-cache cleanup."
+    }
+    return ""
+}
+
+function Add-CloseHint {
+    param([string]$Label)
+
+    $hint = Get-CloseHint -Label $Label
+    if (-not [string]::IsNullOrWhiteSpace($hint)) {
+        $script:CloseHints[$hint] = $true
+    }
+}
+
+function Add-AdminRetryHint {
+    $script:CloseHints["Run WinSweep as administrator if protected Windows or Store app caches are skipped."] = $true
+}
+
+function Get-ProfileName {
+    if ([string]::IsNullOrWhiteSpace($Profile)) {
+        return "custom"
+    }
+    return $Profile
+}
+
+function Show-ScanResults {
+    param([string]$Mode)
+
+    $rows = @($script:TargetResults | Where-Object { $_.Bytes -gt 0 } | Sort-Object Bytes -Descending)
+    $totalBytes = [int64]0
+    $totalItems = 0
+    foreach ($row in $rows) {
+        $totalBytes += [int64]$row.Bytes
+        $totalItems += [int]$row.Items
+    }
+
+    $title = if ($Mode -eq "clean") { "Cleaned Results" } else { "Scan Results" }
+    $lines = @(
+        ("profile: {0}" -f (Get-ProfileName)),
+        ("selected: {0} item(s), {1}" -f $totalItems, (Format-ByteSize $totalBytes))
+    )
+
+    if ($rows.Count -eq 0) {
+        $lines += "no sizeable removable cache found for this profile."
+        Write-Panel -Title $title -Lines $lines
+        return
+    }
+
+    $lines += "top categories:"
+    foreach ($row in ($rows | Select-Object -First 12)) {
+        $lines += ("{0} | {1} | {2} item(s) | {3}/{4}" -f (Format-ByteSize ([int64]$row.Bytes)), $row.Label, $row.Items, $row.Category, $row.Risk)
+        Write-Log ("Result: {0} | {1} | {2} item(s) | {3}/{4} | {5}" -f (Format-ByteSize ([int64]$row.Bytes)), $row.Label, $row.Items, $row.Category, $row.Risk, $row.Path) -Detail
+    }
+
+    Write-Panel -Title $title -Lines $lines
+}
+
+function Get-DiskSummaryLines {
+    param(
+        $Before,
+        $After
+    )
+
+    if ($null -eq $Before -or $null -eq $After) {
+        return @()
+    }
+
+    if ($DryRun) {
+        return @(
+            ("disk free: {0} ({1}%)" -f (Format-ByteSize ([int64]$After.FreeBytes)), $After.FreePercent)
+        )
+    }
+
+    $delta = [int64]$After.FreeBytes - [int64]$Before.FreeBytes
+    $deltaText = Format-ByteSize ([Math]::Abs($delta))
+    if ($delta -ge 0) {
+        $deltaText = "+$deltaText"
+    }
+    else {
+        $deltaText = "-$deltaText"
+    }
+
+    return @(
+        ("disk before: {0} free ({1}%)" -f (Format-ByteSize ([int64]$Before.FreeBytes)), $Before.FreePercent),
+        ("disk after: {0} free ({1}%)" -f (Format-ByteSize ([int64]$After.FreeBytes)), $After.FreePercent),
+        ("disk delta: {0}" -f $deltaText)
+    )
+}
+
+function Show-CloseHints {
+    if ($script:CloseHints.Count -eq 0) {
+        return
+    }
+
+    $lines = @($script:CloseHints.Keys | Sort-Object)
+    Write-Panel -Title "Retry Tips" -Lines $lines
+}
+
 function Get-DriveSnapshot {
     param([string]$Drive)
 
@@ -190,7 +377,7 @@ function Get-DriveSnapshot {
         }
     }
     catch {
-        Write-Log "CIM drive lookup failed for $Drive. Trying PSDrive fallback. $($_.Exception.Message)" "WARN"
+        Write-Log "CIM drive lookup failed for $Drive. Trying PSDrive fallback. $($_.Exception.Message)" "WARN" -Detail
     }
 
     try {
@@ -210,10 +397,10 @@ function Get-DriveSnapshot {
             }
         }
 
-        Write-Log "PSDrive lookup returned an empty disk size for $Drive. Trying DriveInfo fallback." "WARN"
+        Write-Log "PSDrive lookup returned an empty disk size for $Drive. Trying DriveInfo fallback." "WARN" -Detail
     }
     catch {
-        Write-Log "PSDrive lookup failed for $Drive. Trying DriveInfo fallback. $($_.Exception.Message)" "WARN"
+        Write-Log "PSDrive lookup failed for $Drive. Trying DriveInfo fallback. $($_.Exception.Message)" "WARN" -Detail
     }
 
     try {
@@ -335,6 +522,7 @@ function Remove-OldContents {
 
     if (-not (Test-SafeCleanupDirectory -Path $Path)) {
         Write-Log "Skipped unsafe or empty path for ${Label}: $Path" "WARN"
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "unsafe"
         return
     }
 
@@ -343,18 +531,28 @@ function Remove-OldContents {
     }
     catch {
         Write-Log "Skipped inaccessible path for ${Label}: $Path. $($_.Exception.Message)" "WARN"
+        Add-AdminRetryHint
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "inaccessible"
         return
     }
 
     if (-not $pathExists) {
         Write-Log "Skipped missing path for ${Label}: $Path"
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "missing"
         return
     }
 
     $cutoff = (Get-Date).AddDays(-[Math]::Abs($OlderThanDays))
-    Write-Log "Cleaning $Label older than $OlderThanDays day(s): $Path"
     $targetBytes = [int64]0
     $targetItems = 0
+    $targetFailures = 0
+    $actionVerb = if ($DryRun) { "Scanning" } else { "Cleaning" }
+    if ($DryRun) {
+        Write-Log "$actionVerb $Label older than $OlderThanDays day(s): $Path" -Detail
+    }
+    else {
+        Write-Log "$actionVerb $Label older than $OlderThanDays day(s): $Path"
+    }
 
     try {
         $files = Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue |
@@ -362,6 +560,8 @@ function Remove-OldContents {
     }
     catch {
         Write-Log "Could not enumerate files in $Path. $($_.Exception.Message)" "WARN"
+        Add-AdminRetryHint
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes $targetBytes -Items $targetItems -Failures $targetFailures -Status "enumeration failed"
         return
     }
 
@@ -385,6 +585,8 @@ function Remove-OldContents {
         }
         catch {
             $script:FailedItems += 1
+            $targetFailures += 1
+            Add-CloseHint -Label $Label
             Write-Log "Could not remove file: $($file.FullName). $($_.Exception.Message)" "WARN"
         }
     }
@@ -395,6 +597,7 @@ function Remove-OldContents {
     }
     catch {
         Write-Log "Could not enumerate directories in $Path. $($_.Exception.Message)" "WARN"
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes $targetBytes -Items $targetItems -Failures $targetFailures -Status "partial"
         return
     }
 
@@ -422,6 +625,8 @@ function Remove-OldContents {
         }
         catch {
             $script:FailedItems += 1
+            $targetFailures += 1
+            Add-CloseHint -Label $Label
             Write-Log "Could not remove folder: $($directory.FullName). $($_.Exception.Message)" "WARN"
         }
     }
@@ -434,6 +639,14 @@ function Remove-OldContents {
             Write-Log ("Cleaned {0}: {1} item(s), about {2}." -f $Label, $targetItems, (Format-ByteSize $targetBytes))
         }
     }
+
+    $status = if ($targetItems -gt 0) {
+        if ($DryRun) { "would clean" } else { "cleaned" }
+    }
+    else {
+        "empty"
+    }
+    Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes $targetBytes -Items $targetItems -Failures $targetFailures -Status $status
 }
 
 function Add-Target {
@@ -598,6 +811,12 @@ function Add-GameCacheTargets {
     Add-Target -Targets $Targets -Label "Battle.net cache" -Path (Join-Path $env:ProgramData "Battle.net\Cache") -Days $Days
     Add-Target -Targets $Targets -Label "Battle.net local cache" -Path (Join-Path $env:LOCALAPPDATA "Battle.net\Cache") -Days $Days
     Add-Target -Targets $Targets -Label "EA Desktop cache" -Path (Join-Path $env:LOCALAPPDATA "Electronic Arts\EA Desktop\cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Ubisoft Connect cache" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Ubisoft Connect logs" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\logs") -Days $Days
+    Add-Target -Targets $Targets -Label "Riot Client cache" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Data\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Riot Client logs" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Logs") -Days $Days
+    Add-Target -Targets $Targets -Label "Rockstar Launcher cache" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Rockstar Launcher logs" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Logs") -Days $Days
 }
 
 function Add-ExtraPathTargets {
@@ -803,6 +1022,46 @@ function Invoke-RecycleBinCleanup {
     }
 }
 
+if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+    switch ($Profile) {
+        "Safe" {
+            $AggressiveSafe = $true
+            $TempOlderThanDays = [Math]::Min($TempOlderThanDays, 1)
+            $CacheOlderThanDays = [Math]::Min($CacheOlderThanDays, 3)
+        }
+        "Gaming" {
+            $AggressiveSafe = $true
+            $CleanBrowserCaches = $true
+            $CleanAppCaches = $true
+            $CleanGameCaches = $true
+            $TempOlderThanDays = [Math]::Min($TempOlderThanDays, 1)
+            $CacheOlderThanDays = [Math]::Min($CacheOlderThanDays, 1)
+        }
+        "Deep" {
+            $Deep = $true
+            $AggressiveSafe = $true
+            $CleanDeveloperCaches = $true
+            $CleanGameCaches = $true
+            $CleanRegistry = $true
+            $TempOlderThanDays = [Math]::Min($TempOlderThanDays, 1)
+            $CacheOlderThanDays = [Math]::Min($CacheOlderThanDays, 3)
+        }
+        "Emergency" {
+            $Deep = $true
+            $AggressiveSafe = $true
+            $CleanDeveloperCaches = $true
+            $CleanGameCaches = $true
+            $CleanRegistry = $true
+            $TempOlderThanDays = 0
+            $CacheOlderThanDays = 0
+        }
+    }
+}
+
+if ($Analyze) {
+    $DryRun = $true
+}
+
 if ($AggressiveSafe) {
     $CleanBrowserCaches = $true
     $CleanAppCaches = $true
@@ -823,18 +1082,31 @@ if ([string]::IsNullOrWhiteSpace($GuardDrive)) {
     $GuardDrive = $env:SystemDrive
 }
 
+$modeName = if ($Analyze) {
+    "analyze"
+}
+elseif ($DryRun) {
+    "preview"
+}
+else {
+    "clean"
+}
+
 Write-Panel -Title "WinSweep" -Lines @(
-    ("mode: {0}{1}{2}" -f ($(if ($DryRun) { "preview" } else { "clean" })), ($(if ($Deep) { " + deep" } else { "" })), ($(if ($SmartGuard) { " + guard" } else { "" }))),
+    ("mode: {0}{1}{2}" -f $modeName, ($(if ($Deep) { " + deep" } else { "" })), ($(if ($SmartGuard) { " + guard" } else { "" }))),
+    ("profile: {0}" -f (Get-ProfileName)),
     ("log: {0}" -f $LogFile)
 )
 
-Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
+Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
 Write-Log "Log file: $LogFile" -Detail
 
 if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
     Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")
     exit 0
 }
+
+$startSnapshot = Get-DriveSnapshot -Drive $GuardDrive
 
 $targets = New-Object System.Collections.ArrayList
 Add-Target -Targets $targets -Label "user temp" -Path $env:TEMP -Days $TempOlderThanDays
@@ -916,22 +1188,34 @@ catch {
     Write-Log "Could not rotate old logs. $($_.Exception.Message)" "WARN"
 }
 
+$endSnapshot = Get-DriveSnapshot -Drive $GuardDrive
+$diskSummaryLines = Get-DiskSummaryLines -Before $startSnapshot -After $endSnapshot
+
 if ($DryRun) {
-    Write-Log ("Preview finished. Would clean {0} item(s), about {1}, failures: {2}." -f $script:PotentialItems, (Format-ByteSize $script:PotentialBytes), $script:FailedItems)
-    Write-Panel -Title "Summary" -Lines @(
+    $previewName = if ($Analyze) { "Analyze" } else { "Preview" }
+    Write-Log ("{0} finished. Would clean {1} item(s), about {2}, failures: {3}." -f $previewName, $script:PotentialItems, (Format-ByteSize $script:PotentialBytes), $script:FailedItems)
+    Show-ScanResults -Mode "preview"
+    $summaryLines = @(
         ("would clean: {0} item(s)" -f $script:PotentialItems),
         ("estimated reclaim: {0}" -f (Format-ByteSize $script:PotentialBytes)),
         ("failures: {0}" -f $script:FailedItems)
     )
+    $summaryLines += $diskSummaryLines
+    Write-Panel -Title "Summary" -Lines $summaryLines
 }
 else {
     Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, failures: {2}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:FailedItems)
-    Write-Panel -Title "Summary" -Lines @(
+    Show-ScanResults -Mode "clean"
+    $summaryLines = @(
         ("removed: {0} item(s)" -f $script:DeletedItems),
         ("reclaimed: {0}" -f (Format-ByteSize $script:DeletedBytes)),
         ("failures: {0}" -f $script:FailedItems)
     )
+    $summaryLines += $diskSummaryLines
+    Write-Panel -Title "Summary" -Lines $summaryLines
 }
+
+Show-CloseHints
 
 if ($script:FailedItems -gt 0) {
     exit 1
