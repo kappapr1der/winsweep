@@ -27,6 +27,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
+$script:WinSweepVersion = "0.1.5"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -70,7 +71,8 @@ function New-LogFolder {
 }
 
 $LogDir = New-LogFolder -PreferredLogDir $LogDir
-$LogFile = Join-Path $LogDir ("cleanup-{0:yyyy-MM-dd-HHmmss}.log" -f (Get-Date))
+$LogStamp = "{0:yyyy-MM-dd-HHmmss-fff}-pid{1}" -f (Get-Date), $PID
+$LogFile = Join-Path $LogDir ("cleanup-$LogStamp.log")
 
 function Write-Log {
     param(
@@ -197,17 +199,18 @@ function Get-DriveSnapshot {
         $freeBytes = [int64]$psDrive.Free
         $usedBytes = [int64]$psDrive.Used
         $totalBytes = $freeBytes + $usedBytes
-        if ($totalBytes -le 0) {
-            return $null
-        }
-        $freePercent = [Math]::Round(($freeBytes / $totalBytes) * 100, 1)
+        if ($totalBytes -gt 0) {
+            $freePercent = [Math]::Round(($freeBytes / $totalBytes) * 100, 1)
 
-        return [pscustomobject]@{
-            Drive = $driveName
-            FreeBytes = $freeBytes
-            TotalBytes = $totalBytes
-            FreePercent = $freePercent
+            return [pscustomobject]@{
+                Drive = $driveName
+                FreeBytes = $freeBytes
+                TotalBytes = $totalBytes
+                FreePercent = $freePercent
+            }
         }
+
+        Write-Log "PSDrive lookup returned an empty disk size for $Drive. Trying DriveInfo fallback." "WARN"
     }
     catch {
         Write-Log "PSDrive lookup failed for $Drive. Trying DriveInfo fallback. $($_.Exception.Message)" "WARN"
@@ -215,7 +218,7 @@ function Get-DriveSnapshot {
 
     try {
         $root = "$($driveName.TrimEnd(':')):\"
-        $driveInfo = New-Object System.IO.DriveInfo($root)
+        $driveInfo = New-Object -TypeName System.IO.DriveInfo -ArgumentList $root
         if (-not $driveInfo.IsReady -or $driveInfo.TotalSize -le 0) {
             return $null
         }
@@ -825,7 +828,7 @@ Write-Panel -Title "WinSweep" -Lines @(
     ("log: {0}" -f $LogFile)
 )
 
-Write-Log "Windows cleanup started. Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
+Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
 Write-Log "Log file: $LogFile" -Detail
 
 if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
