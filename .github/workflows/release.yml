@@ -72,18 +72,18 @@ jobs:
       - name: Write release notes
         shell: pwsh
         run: |
-          @"
-          WinSweep $env:WINSWEEP_TAG
-
-          Download `WinSweep-v$env:WINSWEEP_VERSION.zip`, extract it, then run `setup-desktop-folder.bat` or `winsweep-menu.bat`.
-
-          Included:
-          - Windows cleanup profiles and pressure guard
-          - HTML reports
-          - disk analyzer lite
-          - cleanup history
-          - configurable `winsweep-config.json`
-          "@ | Set-Content -LiteralPath release-notes.md -Encoding UTF8
+          @(
+            "WinSweep $env:WINSWEEP_TAG",
+            "",
+            "Download ``WinSweep-v$env:WINSWEEP_VERSION.zip``, extract it, then run ``setup-desktop-folder.bat`` or ``winsweep-menu.bat``.",
+            "",
+            "Included:",
+            "- Windows cleanup profiles and pressure guard",
+            "- HTML reports",
+            "- disk analyzer lite",
+            "- cleanup history",
+            "- configurable ``winsweep-config.json``"
+          ) | Set-Content -LiteralPath release-notes.md -Encoding UTF8
 
       - name: Create or update GitHub release
         shell: pwsh
@@ -105,9 +105,11 @@ jobs:
               $env:WINSWEEP_TAG,
               $zip,
               "--title", "WinSweep $env:WINSWEEP_TAG",
-              "--notes-file", "release-notes.md",
-              "--target", "${{ github.sha }}"
+              "--notes-file", "release-notes.md"
             )
+            if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+              $args += @("--target", "${{ github.sha }}")
+            }
             if ($isPrerelease) {
               $args += "--prerelease"
             }
