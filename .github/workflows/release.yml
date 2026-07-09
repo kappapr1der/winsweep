@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example 0.4.0 or v0.4.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "push") {
+            $tag = "${{ github.ref_name }}"
+            $version = $tag.TrimStart("v")
+          } else {
+            $version = "${{ inputs.version }}".TrimStart("v")
+            $tag = "v$version"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Version is empty."
+          }
+
+          "WINSWEEP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "WINSWEEP_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Validate PowerShell scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path . -Filter "*.ps1" | ForEach-Object {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) {
+              $errors | Format-List *
+              throw "PowerShell parser failed for $($_.Name)."
+            }
+            Write-Host "OK $($_.Name)"
+          }
+
+      - name: Build release zip
+        shell: pwsh
+        run: |
+          .\build-release.ps1 -Version $env:WINSWEEP_VERSION
+          $zip = "dist\WinSweep-v$env:WINSWEEP_VERSION.zip"
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "Release zip was not created: $zip"
+          }
+
+      - name: Write release notes
+        shell: pwsh
+        run: |
+          @"
+          WinSweep $env:WINSWEEP_TAG
+
+          Download `WinSweep-v$env:WINSWEEP_VERSION.zip`, extract it, then run `setup-desktop-folder.bat` or `winsweep-menu.bat`.
+
+          Included:
+          - Windows cleanup profiles and pressure guard
+          - HTML reports
+          - disk analyzer lite
+          - cleanup history
+          - configurable `winsweep-config.json`
+          "@ | Set-Content -LiteralPath release-notes.md -Encoding UTF8
+
+      - name: Create or update GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $zip = "dist\WinSweep-v$env:WINSWEEP_VERSION.zip"
+          $isPrerelease = "${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.prerelease }}" -eq "true"
+
+          gh release view $env:WINSWEEP_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:WINSWEEP_TAG $zip --clobber
+            gh release edit $env:WINSWEEP_TAG --title "WinSweep $env:WINSWEEP_TAG" --notes-file release-notes.md
+            if ($isPrerelease) {
+              gh release edit $env:WINSWEEP_TAG --prerelease
+            }
+          } else {
+            $args = @(
+              $env:WINSWEEP_TAG,
+              $zip,
+              "--title", "WinSweep $env:WINSWEEP_TAG",
+              "--notes-file", "release-notes.md",
+              "--target", "${{ github.sha }}"
+            )
+            if ($isPrerelease) {
+              $args += "--prerelease"
+            }
+            gh release create @args
+          }

@@ -181,6 +181,30 @@ It creates:
 dist\WinSweep-vX.Y.Z.zip
 ```
 
+## GitHub Releases
+
+The repository includes `.github/workflows/release.yml`.
+
+Automatic release by tag:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+GitHub Actions will build `dist\WinSweep-v0.4.0.zip` and publish it on the
+GitHub Releases page.
+
+Manual release:
+
+1. Open the repository on GitHub.
+2. Go to `Actions`.
+3. Select `Release`.
+4. Click `Run workflow`.
+5. Enter a version such as `0.4.0`.
+
+The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`.
+
 ## Safety Notes
 
 WinSweep intentionally avoids:
