@@ -24,13 +24,14 @@ param(
     [ValidateSet("", "Safe", "Gaming", "Deep", "Emergency")]
     [string]$Profile = "",
     [string]$ExtraPathsFile = "",
-    [string]$LogDir = ""
+    [string]$LogDir = "",
+    [string]$ConfigPath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
-$script:WinSweepVersion = "0.2.0"
+$script:WinSweepVersion = "0.3.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -38,11 +39,89 @@ $script:PotentialItems = 0
 $script:FailedItems = 0
 $script:TargetResults = New-Object System.Collections.ArrayList
 $script:CloseHints = @{}
+$script:ConfigSource = ""
+$script:ConfigLoadWarning = ""
+$script:CliParameters = @{}
+foreach ($key in $PSBoundParameters.Keys) {
+    $script:CliParameters[$key] = $true
+}
 
 function Test-IsAdministrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-ConfigProperty {
+    param(
+        $Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Resolve-WinSweepPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path)
+    if ([IO.Path]::IsPathRooted($expanded)) {
+        return $expanded
+    }
+
+    return (Join-Path $PSScriptRoot $expanded)
+}
+
+function Set-StringFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([string]$Value) -Scope Script
+}
+
+function Set-IntFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([int]$Value) -Scope Script
+}
+
+function Set-SwitchFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([bool]$Value) -Scope Script
 }
 
 function New-LogFolder {
@@ -73,6 +152,80 @@ function New-LogFolder {
     }
 
     throw "Could not create a log directory."
+}
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $defaultConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
+    if (Test-Path -LiteralPath $defaultConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $ConfigPath = $defaultConfigPath
+    }
+}
+else {
+    $ConfigPath = Resolve-WinSweepPath -Path $ConfigPath
+}
+
+$config = $null
+if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+    try {
+        if (Test-Path -LiteralPath $ConfigPath -PathType Leaf -ErrorAction Stop) {
+            $configFullPath = (Resolve-Path -LiteralPath $ConfigPath -ErrorAction Stop).ProviderPath
+            $config = Get-Content -LiteralPath $configFullPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            $script:ConfigSource = $configFullPath
+        }
+        elseif ($script:CliParameters.ContainsKey("ConfigPath")) {
+            $script:ConfigLoadWarning = "Config file was not found: $ConfigPath"
+        }
+    }
+    catch {
+        $script:ConfigLoadWarning = "Could not read config file: $ConfigPath. $($_.Exception.Message)"
+    }
+}
+
+if ($null -ne $config) {
+    $configuredProfile = Get-ConfigProperty -Object $config -Name "defaultProfile"
+    if ($null -ne $configuredProfile -and -not $script:CliParameters.ContainsKey("Profile")) {
+        $validProfiles = @("", "Safe", "Gaming", "Deep", "Emergency")
+        if ($validProfiles -contains ([string]$configuredProfile)) {
+            $Profile = [string]$configuredProfile
+        }
+        else {
+            $script:ConfigLoadWarning = "Config defaultProfile is invalid: $configuredProfile"
+        }
+    }
+
+    $thresholds = Get-ConfigProperty -Object $config -Name "thresholds"
+    Set-IntFromConfig -Name "MinFreeGB" -Value (Get-ConfigProperty -Object $thresholds -Name "minFreeGB")
+    Set-IntFromConfig -Name "MinFreePercent" -Value (Get-ConfigProperty -Object $thresholds -Name "minFreePercent")
+    Set-IntFromConfig -Name "TempOlderThanDays" -Value (Get-ConfigProperty -Object $thresholds -Name "tempOlderThanDays")
+    Set-IntFromConfig -Name "CacheOlderThanDays" -Value (Get-ConfigProperty -Object $thresholds -Name "cacheOlderThanDays")
+    Set-IntFromConfig -Name "LogRetentionDays" -Value (Get-ConfigProperty -Object $thresholds -Name "logRetentionDays")
+
+    $features = Get-ConfigProperty -Object $config -Name "features"
+    Set-SwitchFromConfig -Name "AggressiveSafe" -Value (Get-ConfigProperty -Object $features -Name "aggressiveSafe")
+    Set-SwitchFromConfig -Name "CleanBrowserCaches" -Value (Get-ConfigProperty -Object $features -Name "browserCaches")
+    Set-SwitchFromConfig -Name "CleanAppCaches" -Value (Get-ConfigProperty -Object $features -Name "appCaches")
+    Set-SwitchFromConfig -Name "CleanSpotifyCache" -Value (Get-ConfigProperty -Object $features -Name "spotifyCache")
+    Set-SwitchFromConfig -Name "CleanRegistry" -Value (Get-ConfigProperty -Object $features -Name "registry")
+    Set-SwitchFromConfig -Name "CleanExtraPaths" -Value (Get-ConfigProperty -Object $features -Name "extraPaths")
+    Set-SwitchFromConfig -Name "CleanDeveloperCaches" -Value (Get-ConfigProperty -Object $features -Name "developerCaches")
+    Set-SwitchFromConfig -Name "CleanGameCaches" -Value (Get-ConfigProperty -Object $features -Name "gameCaches")
+    Set-SwitchFromConfig -Name "ClearRecycleBin" -Value (Get-ConfigProperty -Object $features -Name "clearRecycleBin")
+
+    $paths = Get-ConfigProperty -Object $config -Name "paths"
+    $configuredGuardDrive = Get-ConfigProperty -Object $paths -Name "guardDrive"
+    if ($null -ne $configuredGuardDrive -and -not $script:CliParameters.ContainsKey("GuardDrive")) {
+        $GuardDrive = [string]$configuredGuardDrive
+    }
+
+    $configuredExtraPathsFile = Get-ConfigProperty -Object $paths -Name "extraPathsFile"
+    if ($null -ne $configuredExtraPathsFile -and -not $script:CliParameters.ContainsKey("ExtraPathsFile")) {
+        $ExtraPathsFile = Resolve-WinSweepPath -Path ([string]$configuredExtraPathsFile)
+    }
+
+    $configuredLogDir = Get-ConfigProperty -Object $paths -Name "logDir"
+    if ($null -ne $configuredLogDir -and -not $script:CliParameters.ContainsKey("LogDir")) {
+        $LogDir = Resolve-WinSweepPath -Path ([string]$configuredLogDir)
+    }
 }
 
 $LogDir = New-LogFolder -PreferredLogDir $LogDir
@@ -1092,14 +1245,22 @@ else {
     "clean"
 }
 
-Write-Panel -Title "WinSweep" -Lines @(
+$introLines = @(
     ("mode: {0}{1}{2}" -f $modeName, ($(if ($Deep) { " + deep" } else { "" })), ($(if ($SmartGuard) { " + guard" } else { "" }))),
     ("profile: {0}" -f (Get-ProfileName)),
     ("log: {0}" -f $LogFile)
 )
+if (-not [string]::IsNullOrWhiteSpace($script:ConfigSource)) {
+    $introLines = @($introLines[0], $introLines[1], ("config: {0}" -f $script:ConfigSource), $introLines[2])
+}
 
-Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
+Write-Panel -Title "WinSweep" -Lines $introLines
+
+Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Config=$script:ConfigSource Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
 Write-Log "Log file: $LogFile" -Detail
+if (-not [string]::IsNullOrWhiteSpace($script:ConfigLoadWarning)) {
+    Write-Log $script:ConfigLoadWarning "WARN"
+}
 
 if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
     Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")

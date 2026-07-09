@@ -27,6 +27,8 @@ New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
 $files = @(
     "cleanup-windows.ps1",
     "install-scheduled-cleanup.ps1",
+    "winsweep-menu.bat",
+    "winsweep-config.json",
     "scan-results.bat",
     "cleanup-now.bat",
     "cleanup-safe-now.bat",
@@ -44,7 +46,8 @@ $files = @(
     "setup-desktop-folder.ps1",
     "setup-desktop-folder.bat",
     "extra-cache-paths.txt",
-    "README.md"
+    "README.md",
+    "CONFIG.md"
 )
 
 foreach ($file in $files) {

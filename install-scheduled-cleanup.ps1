@@ -14,11 +14,125 @@ param(
     [switch]$ExtraPaths,
     [switch]$DeveloperCaches,
     [switch]$GameCaches,
-    [switch]$RecycleBin
+    [switch]$RecycleBin,
+    [string]$ConfigPath = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$script:CliParameters = @{}
+foreach ($key in $PSBoundParameters.Keys) {
+    $script:CliParameters[$key] = $true
+}
+
+function Get-ConfigProperty {
+    param(
+        $Object,
+        [string]$Name
+    )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Resolve-WinSweepPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $expanded = [Environment]::ExpandEnvironmentVariables($Path)
+    if ([IO.Path]::IsPathRooted($expanded)) {
+        return $expanded
+    }
+
+    return (Join-Path $PSScriptRoot $expanded)
+}
+
+function Set-StringFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([string]$Value) -Scope Script
+}
+
+function Set-IntFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([int]$Value) -Scope Script
+}
+
+function Set-SwitchFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value ([bool]$Value) -Scope Script
+}
+
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $defaultConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
+    if (Test-Path -LiteralPath $defaultConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $ConfigPath = $defaultConfigPath
+    }
+}
+else {
+    $ConfigPath = Resolve-WinSweepPath -Path $ConfigPath
+}
+
+if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath $ConfigPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+    $config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+
+    $schedule = Get-ConfigProperty -Object $config -Name "schedule"
+    Set-StringFromConfig -Name "GuardStart" -Value (Get-ConfigProperty -Object $schedule -Name "guardStart")
+    Set-IntFromConfig -Name "GuardEveryHours" -Value (Get-ConfigProperty -Object $schedule -Name "guardEveryHours")
+    Set-StringFromConfig -Name "DeepWeekly" -Value (Get-ConfigProperty -Object $schedule -Name "deepWeekly")
+    Set-StringFromConfig -Name "DeepDay" -Value (Get-ConfigProperty -Object $schedule -Name "deepDay")
+
+    $thresholds = Get-ConfigProperty -Object $config -Name "thresholds"
+    Set-IntFromConfig -Name "LowFreeGB" -Value (Get-ConfigProperty -Object $thresholds -Name "minFreeGB")
+    Set-IntFromConfig -Name "LowFreePercent" -Value (Get-ConfigProperty -Object $thresholds -Name "minFreePercent")
+
+    $features = Get-ConfigProperty -Object $config -Name "features"
+    Set-SwitchFromConfig -Name "BrowserCaches" -Value (Get-ConfigProperty -Object $features -Name "browserCaches")
+    Set-SwitchFromConfig -Name "AppCaches" -Value (Get-ConfigProperty -Object $features -Name "appCaches")
+    Set-SwitchFromConfig -Name "SpotifyCache" -Value (Get-ConfigProperty -Object $features -Name "spotifyCache")
+    Set-SwitchFromConfig -Name "Registry" -Value (Get-ConfigProperty -Object $features -Name "registry")
+    Set-SwitchFromConfig -Name "ExtraPaths" -Value (Get-ConfigProperty -Object $features -Name "extraPaths")
+    Set-SwitchFromConfig -Name "DeveloperCaches" -Value (Get-ConfigProperty -Object $features -Name "developerCaches")
+    Set-SwitchFromConfig -Name "GameCaches" -Value (Get-ConfigProperty -Object $features -Name "gameCaches")
+    Set-SwitchFromConfig -Name "RecycleBin" -Value (Get-ConfigProperty -Object $features -Name "clearRecycleBin")
+
+    Write-Host "Using config: $ConfigPath"
+}
 
 $scriptPath = Join-Path $PSScriptRoot "cleanup-windows.ps1"
 if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
@@ -53,7 +167,11 @@ function Register-CleanupTask {
         [string]$Description
     )
 
-    $actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $CleanupArgs"
+    $configArg = ""
+    if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+        $configArg = " -ConfigPath `"$ConfigPath`""
+    }
+    $actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $CleanupArgs$configArg"
     $action = New-ScheduledTaskAction -Execute $powershellPath -Argument $actionArgs
     $task = New-ScheduledTask -Action $action -Trigger $Trigger -Settings $settings -Principal $principal -Description $Description
     Register-ScheduledTask -TaskPath $taskPath -TaskName $Name -InputObject $task -Force | Out-Null

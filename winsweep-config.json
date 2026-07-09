@@ -1,0 +1,32 @@
+{
+  "defaultProfile": "Safe",
+  "thresholds": {
+    "minFreeGB": 35,
+    "minFreePercent": 18,
+    "tempOlderThanDays": 1,
+    "cacheOlderThanDays": 3,
+    "logRetentionDays": 30
+  },
+  "paths": {
+    "guardDrive": "C:",
+    "extraPathsFile": "extra-cache-paths.txt",
+    "logDir": ""
+  },
+  "features": {
+    "aggressiveSafe": false,
+    "browserCaches": false,
+    "appCaches": false,
+    "spotifyCache": false,
+    "registry": true,
+    "extraPaths": false,
+    "developerCaches": false,
+    "gameCaches": false,
+    "clearRecycleBin": false
+  },
+  "schedule": {
+    "guardStart": "00:15",
+    "guardEveryHours": 3,
+    "deepWeekly": "03:20",
+    "deepDay": "Sunday"
+  }
+}
