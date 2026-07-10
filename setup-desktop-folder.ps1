@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$FolderName = "WinSweep",
+    [string]$DestinationRoot = "",
     [switch]$InstallSchedule,
     [switch]$BrowserCaches,
     [switch]$AppCaches,
@@ -15,10 +16,44 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Merge-ConfigDefaults {
+    param(
+        $Existing,
+        $Defaults
+    )
+
+    foreach ($defaultProperty in $Defaults.PSObject.Properties) {
+        $existingProperty = $Existing.PSObject.Properties[$defaultProperty.Name]
+        if ($null -eq $existingProperty) {
+            $Existing | Add-Member -NotePropertyName $defaultProperty.Name -NotePropertyValue $defaultProperty.Value -Force
+            continue
+        }
+
+        if ($existingProperty.Value -is [pscustomobject] -and $defaultProperty.Value -is [pscustomobject]) {
+            Merge-ConfigDefaults -Existing $existingProperty.Value -Defaults $defaultProperty.Value
+        }
+    }
+}
+
+function Update-ConfigWithoutReset {
+    param(
+        [string]$DefaultConfigPath,
+        [string]$ExistingConfigPath
+    )
+
+    $defaults = Get-Content -LiteralPath $DefaultConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    $existing = Get-Content -LiteralPath $ExistingConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    Merge-ConfigDefaults -Existing $existing -Defaults $defaults
+    [IO.File]::WriteAllText($ExistingConfigPath, ($existing | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+}
+
 $sourceRoot = Split-Path -Parent $PSCommandPath
-$desktop = [Environment]::GetFolderPath("DesktopDirectory")
+$desktop = $DestinationRoot
 if ([string]::IsNullOrWhiteSpace($desktop)) {
-    $desktop = Join-Path $env:USERPROFILE "Desktop"
+    $desktop = [Environment]::GetFolderPath("DesktopDirectory")
+    if ([string]::IsNullOrWhiteSpace($desktop)) {
+        $desktop = Join-Path $env:USERPROFILE "Desktop"
+    }
 }
 
 $targetRoot = Join-Path $desktop $FolderName
@@ -73,6 +108,19 @@ foreach ($file in $files) {
 
     if ($sourceFull -ieq $destinationFull) {
         continue
+    }
+
+    if ($file -eq "winsweep-config.json" -and (Test-Path -LiteralPath $destination -PathType Leaf)) {
+        try {
+            Update-ConfigWithoutReset -DefaultConfigPath $source -ExistingConfigPath $destination
+            Write-Host "Updated config without resetting personal settings:"
+            Write-Host $destination
+            continue
+        }
+        catch {
+            Write-Warning "Could not merge existing config. Keeping it unchanged: $destination. $($_.Exception.Message)"
+            continue
+        }
     }
 
     Copy-Item -LiteralPath $source -Destination $destination -Force
