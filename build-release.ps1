@@ -37,6 +37,8 @@ $files = @(
     "cleanup-windows.ps1",
     "winsweep-config.json",
     "winsweep-menu.bat",
+    "winsweep-ui.ps1",
+    "winsweep-ui.bat",
     "scan-results.bat",
     "cleanup-safe-now.bat",
     "cleanup-gaming-now.bat",

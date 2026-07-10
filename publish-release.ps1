@@ -289,7 +289,9 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     "- безопасная диагностика гибернации, точек восстановления и компонентов Windows",
     "- открытие HTML-отчётов в Google Chrome с безопасным fallback",
     "- пересоздание задач Планировщика с прямым путём к системному PowerShell",
-    "- восстановление ярлыков Windows PowerShell из главного меню"
+    "- восстановление ярлыков Windows PowerShell из главного меню",
+    "- единый WPF Control Center для очистки, диагностики, истории и настроек"
+    "- единый WPF Control Center для очистки, диагностики, истории и настроек"
 ) | Set-Content -LiteralPath $notesPath -Encoding UTF8
 
 Write-Host ""
