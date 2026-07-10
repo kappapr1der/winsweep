@@ -30,13 +30,14 @@ echo 2. Safe cleanup
 echo 3. Gaming cleanup
 echo 4. Deep cleanup (admin)
 echo 5. Emergency cleanup (admin)
-echo 6. Disk analyzer lite
+echo 6. Space hog report (read-only)
 echo 7. Cleanup history
 echo 8. Open latest HTML report
 echo 9. Open logs
 echo A. Install scheduled tasks (admin)
 echo B. Edit config
 echo C. Cache switches, disk thresholds, and exclusions
+echo D. Disk analyzer lite
 echo M. System maintenance check (no deletion)
 echo Q. Quit
 echo.
@@ -71,7 +72,7 @@ if "%PICK%"=="5" (
 )
 
 if "%PICK%"=="6" (
-    call "%~dp0disk-analyzer-lite.bat"
+    call "%~dp0space-hog-report.bat"
     goto menu
 )
 
@@ -102,6 +103,11 @@ if /i "%PICK%"=="b" (
 
 if /i "%PICK%"=="c" (
     call "%~dp0manage-winsweep-settings.bat"
+    goto menu
+)
+
+if /i "%PICK%"=="d" (
+    call "%~dp0disk-analyzer-lite.bat"
     goto menu
 )
 

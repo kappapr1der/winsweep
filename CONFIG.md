@@ -48,6 +48,8 @@ WinSweep читает `winsweep-config.json` из той же папки, где
 - `features.registry`: безопасная очистка истории недавних файлов в реестре.
 - `features.clearRecycleBin`: по умолчанию выключена.
 - `features.notifyOnPressure`: уведомлять при срабатывании контроля места.
+  В уведомлении также показываются крупнейшие найденные системные и программные
+  категории, если рядом с `cleanup-windows.ps1` есть `space-hog-report.ps1`.
 - `schedule.guardStart`: первое ежедневное срабатывание контроля места,
   например `00:15`.
 - `schedule.guardEveryHours`: интервал проверки свободного места.

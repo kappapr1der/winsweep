@@ -39,7 +39,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
-$script:WinSweepVersion = "0.5.1"
+$script:WinSweepVersion = "0.6.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -973,13 +973,40 @@ function Show-PressureNotification {
     }
 
     try {
+        $spaceHogScript = Join-Path $PSScriptRoot "space-hog-report.ps1"
+        $hogSummary = ""
+        if (Test-Path -LiteralPath $spaceHogScript -PathType Leaf -ErrorAction SilentlyContinue) {
+            try {
+                $hogSummary = @(
+                    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+                        -File $spaceHogScript `
+                        -Drives $Snapshot.Drive `
+                        -Quick `
+                        -NotificationSummary `
+                        -Top 3 2>$null
+                ) -join " "
+                $hogSummary = $hogSummary.Trim()
+            }
+            catch {
+                Write-Log "Could not collect pressure summary. $($_.Exception.Message)" "WARN"
+            }
+        }
+
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
         Add-Type -AssemblyName System.Drawing -ErrorAction Stop
         $notify = New-Object System.Windows.Forms.NotifyIcon
         $notify.Icon = [System.Drawing.SystemIcons]::Warning
         $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
         $notify.BalloonTipTitle = "WinSweep: мало места"
-        $notify.BalloonTipText = ("{0}: свободно {1} ({2}%). Порог: {3} GB или {4}%. Запускаю безопасную очистку." -f $Snapshot.Drive, (Format-ByteSize $Snapshot.FreeBytes), $Snapshot.FreePercent, $MinimumFreeGB, $MinimumFreePercent)
+        $notificationText = ("{0}: свободно {1} ({2}%). Порог: {3} GB или {4}%." -f $Snapshot.Drive, (Format-ByteSize $Snapshot.FreeBytes), $Snapshot.FreePercent, $MinimumFreeGB, $MinimumFreePercent)
+        if (-not [string]::IsNullOrWhiteSpace($hogSummary)) {
+            $notificationText += "`nКрупнейшие категории: $hogSummary"
+        }
+        $notificationText += "`nЗапускаю безопасную очистку."
+        if ($notificationText.Length -gt 240) {
+            $notificationText = $notificationText.Substring(0, 237) + "..."
+        }
+        $notify.BalloonTipText = $notificationText
         $notify.Visible = $true
         $notify.ShowBalloonTip(8000)
         Start-Sleep -Seconds 8

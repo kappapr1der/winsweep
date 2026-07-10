@@ -76,6 +76,8 @@ $files = @(
     "disk-space-report.ps1",
     "disk-space-report.bat",
     "disk-analyzer-lite.bat",
+    "space-hog-report.ps1",
+    "space-hog-report.bat",
     "manage-winsweep-settings.ps1",
     "manage-winsweep-settings.bat",
     "system-maintenance-check.ps1",
