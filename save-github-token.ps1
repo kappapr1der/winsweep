@@ -46,10 +46,14 @@ else {
     $secure = ConvertTo-SecureString -String $Token -AsPlainText -Force
 }
 
+if ($null -eq $secure -or $secure.Length -eq 0) {
+    throw "No token was entered. Paste the token into the hidden prompt, then press Enter."
+}
+
 $dir = Split-Path -Parent $path
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
-$encrypted = $secure | ConvertFrom-SecureString
+$encrypted = ConvertFrom-SecureString -SecureString $secure
 Set-Content -LiteralPath $path -Value $encrypted -Encoding ASCII
 
 Write-Host "GitHub token saved:"
