@@ -6,6 +6,8 @@ param(
     [string]$TargetCommitish = "main",
     [switch]$Prerelease,
     [switch]$Draft,
+    [switch]$UpdateExisting,
+    [switch]$ReplaceAsset,
     [switch]$SkipTagPush,
     [ValidateRange(10, 300)]
     [int]$RequestTimeoutSeconds = 30,
@@ -306,16 +308,21 @@ $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding UTF8
 
 if ($release) {
     Write-Host "Release already exists: $tag"
-    $release = Invoke-GitHubJson `
-        -Method PATCH `
-        -Uri "$apiRoot/releases/$($release.id)" `
-        -AuthToken $releaseToken `
-        -Body @{
-            name       = "WinSweep $tag"
-            body       = $notes
-            draft      = [bool]$Draft
-            prerelease = [bool]$Prerelease
-        }
+    if ($UpdateExisting) {
+        $release = Invoke-GitHubJson `
+            -Method PATCH `
+            -Uri "$apiRoot/releases/$($release.id)" `
+            -AuthToken $releaseToken `
+            -Body @{
+                name       = "WinSweep $tag"
+                body       = $notes
+                draft      = [bool]$Draft
+                prerelease = [bool]$Prerelease
+            }
+    }
+    else {
+        Write-Host "Keeping existing release title and notes. Use -UpdateExisting to change them."
+    }
 }
 else {
     Write-Host "Creating release: $tag"
@@ -335,20 +342,32 @@ else {
 }
 
 $assets = Invoke-GitHubJson -Method GET -Uri "$apiRoot/releases/$($release.id)/assets?per_page=100" -AuthToken $releaseToken
+$assetAlreadyExists = $false
 foreach ($asset in @($assets)) {
     if ($asset.name -eq $assetName) {
-        Write-Host "Replacing existing asset: $assetName"
-        Invoke-GitHubJson -Method DELETE -Uri "$apiRoot/releases/assets/$($asset.id)" -AuthToken $releaseToken | Out-Null
+        if ($ReplaceAsset) {
+            Write-Host "Replacing existing asset: $assetName"
+            Invoke-GitHubJson -Method DELETE -Uri "$apiRoot/releases/assets/$($asset.id)" -AuthToken $releaseToken | Out-Null
+        }
+        else {
+            $assetAlreadyExists = $true
+            Write-Host "Asset already exists: $assetName"
+        }
     }
 }
 
-$encodedAssetName = [Uri]::EscapeDataString($assetName)
-$uploadUri = "https://uploads.github.com/repos/$Repository/releases/$($release.id)/assets?name=$encodedAssetName"
-$uploadedAsset = Invoke-GitHubUpload -Uri $uploadUri -AuthToken $releaseToken -FilePath $zipPath
+$uploadedAsset = $null
+if (-not $assetAlreadyExists -or $ReplaceAsset) {
+    $encodedAssetName = [Uri]::EscapeDataString($assetName)
+    $uploadUri = "https://uploads.github.com/repos/$Repository/releases/$($release.id)/assets?name=$encodedAssetName"
+    $uploadedAsset = Invoke-GitHubUpload -Uri $uploadUri -AuthToken $releaseToken -FilePath $zipPath
+}
 
 Write-Host ""
 Write-Host "Release published:"
 Write-Host $release.html_url
-Write-Host ""
-Write-Host "Asset:"
-Write-Host $uploadedAsset.browser_download_url
+if ($uploadedAsset) {
+    Write-Host ""
+    Write-Host "Asset:"
+    Write-Host $uploadedAsset.browser_download_url
+}
