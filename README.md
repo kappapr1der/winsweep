@@ -1,55 +1,56 @@
 # WinSweep
 
-WinSweep is a Windows cleanup toolkit for cache-heavy machines: Spotify,
-Telegram, browsers, game launchers, GPU shader caches, Windows temp folders,
-developer caches, safe recent-history registry cleanup, and scheduled pressure
-guards.
+WinSweep - набор для аккуратной очистки Windows на компьютерах, где быстро
+копится кэш. Он умеет чистить временные файлы Windows, кэш Spotify, Telegram,
+браузеров, игровых лаунчеров и GPU-шейдеров, а также строить отчёты и следить
+за свободным местом на дисках.
 
-The default rule is simple: clean disposable cache and temp data, not personal
-files. WinSweep does not touch Downloads, Desktop, Documents, photos, videos,
-projects, browser passwords, cookies, game saves, or whole application folders.
+Главное правило простое: удаляется только одноразовый кэш и временные данные,
+а не личные файлы. WinSweep не трогает Загрузки, Рабочий стол, Документы,
+фотографии, видео, проекты, пароли и cookies браузера, сохранения игр или
+целые папки программ.
 
-## Quick Start
+## Быстрый старт
 
-Run this once as administrator:
+Один раз запусти от имени администратора:
 
 ```bat
 setup-desktop-folder.bat
 ```
 
-It creates:
+На Рабочем столе появится папка:
 
 ```text
-Desktop\WinSweep
+WinSweep
 ```
 
-Then start:
+Дальше запускай главное меню:
 
 ```bat
 winsweep-menu.bat
 ```
 
-## Menu
+## Что есть в меню
 
-`winsweep-menu.bat` is the easiest entry point:
+`winsweep-menu.bat` - основной способ работы с WinSweep.
 
-- Scan results: broad scan, no deletion, opens an HTML report.
-- Safe cleanup: normal safe cache cleanup.
-- Gaming cleanup: game launchers, browser/app caches, GPU shader caches.
-- Deep cleanup: administrator cleanup with Windows component cleanup.
-- Emergency cleanup: more aggressive safe cleanup for low disk space.
-- Disk analyzer lite: top large folders on fixed drives, no deletion.
-- Cleanup history: recent WinSweep runs and reclaimed size.
-- Open latest HTML report.
-- Install scheduled tasks.
-- Edit config.
-- Build release zip.
-- Save GitHub token.
-- Publish GitHub release.
+- Проверка: широкий анализ без удаления, с HTML-отчётом.
+- Безопасная очистка: обычная очистка кэшей и временных файлов.
+- Игровая очистка: игровые лаунчеры, кэш программ и браузеров, GPU-шейдеры.
+- Глубокая очистка: расширенная очистка от имени администратора, включая
+  обслуживание компонентов Windows.
+- Экстренная очистка: более активная, но всё ещё безопасная очистка при
+  нехватке места.
+- Анализатор дисков: показывает крупные папки на локальных дисках, ничего не
+  удаляет.
+- История очисток: последние запуски и освобождённое место.
+- Открытие последнего HTML-отчёта.
+- Установка заданий Планировщика.
+- Редактирование настроек.
 
-## Profiles
+## Режимы очистки
 
-PowerShell examples:
+Примеры запуска из PowerShell:
 
 ```powershell
 .\cleanup-windows.ps1 -Analyze -Profile Emergency -OpenReport
@@ -58,22 +59,22 @@ PowerShell examples:
 .\cleanup-windows.ps1 -Profile Deep
 ```
 
-Profiles:
+- `Safe`: временные файлы, кэш браузеров, программ, Spotify, игр и графики.
+- `Gaming`: игровые лаунчеры и свежий кэш программ, браузеров и GPU.
+- `Deep`: безопасная очистка, кэш инструментов разработки, история недавних
+  файлов в реестре и DISM.
+- `Emergency`: глубокая очистка с нулевым сроком ожидания для временных файлов
+  и кэшей.
 
-- `Safe`: safe temp, browser, app, Spotify, game, and graphics caches.
-- `Gaming`: game launchers plus short-age app/browser/GPU cache cleanup.
-- `Deep`: safe cleanup plus developer caches, registry MRU cleanup, DISM.
-- `Emergency`: deep safe cleanup with zero-day temp/cache age thresholds.
+## Настройки
 
-## Config
-
-WinSweep reads `winsweep-config.json` from the same folder as
+WinSweep читает `winsweep-config.json` из папки, где находится
 `cleanup-windows.ps1`.
 
-Command-line flags win over config values. This keeps old `.bat` launchers and
-scheduled tasks predictable.
+Параметры, переданные в командной строке, важнее настроек файла. Поэтому старые
+`.bat`-ярлыки и задания Планировщика работают предсказуемо.
 
-Useful settings:
+Полезные настройки:
 
 - `defaultProfile`
 - `thresholds.minFreeGB`
@@ -86,68 +87,67 @@ Useful settings:
 - `schedule.guardEveryHours`
 - `schedule.deepWeekly`
 
-See `CONFIG.md` for the compact field guide.
+Короткое описание каждого поля есть в `CONFIG.md`.
 
-## Scheduled Tasks
+## Планировщик
 
-Run as administrator:
+Запусти от имени администратора:
 
 ```bat
 install-scheduled-cleanup.bat
 ```
 
-The installer creates tasks under:
+Задания появятся здесь:
 
 ```text
-Task Scheduler Library\Codex Windows Cleanup
+Библиотека планировщика заданий\Codex Windows Cleanup
 ```
 
-Tasks:
+- `Pressure Guard`: раз в несколько часов проверяет свободное место и чистит
+  только при достижении порога.
+- `Startup Guard`: проверяет диски вскоре после входа в Windows.
+- `Deep Weekly`: выполняет более глубокую еженедельную очистку.
 
-- `Pressure Guard`: checks disk pressure every few hours and cleans only when
-  free space is below the configured threshold.
-- `Startup Guard`: checks shortly after logon.
-- `Deep Weekly`: weekly deeper cleanup.
-
-Default thresholds:
+Порог по умолчанию:
 
 ```text
-below 35 GB free OR below 18% free
+меньше 35 ГБ свободно ИЛИ меньше 18% свободного места
 ```
 
-## HTML Reports
+## HTML-отчёты
 
-Manual scan/cleanup launchers can create an HTML report under:
+Проверка и ручные запуски очистки создают HTML-отчёты в папке:
 
 ```text
 C:\ProgramData\CodexWindowsCleanup\Logs\Reports
 ```
 
-If ProgramData is unavailable, WinSweep falls back to:
+Если `ProgramData` недоступна, используется:
 
 ```text
 %TEMP%\CodexWindowsCleanup\Logs\Reports
 ```
 
-Open the latest report with:
+Последний отчёт открывается командой:
 
 ```bat
 open-latest-report.bat
 ```
 
-Reports include summary metrics, top cleanup targets, preflight warnings,
-retry tips, and all scanned targets.
+В отчёте есть итоги, самые крупные цели очистки, предупреждения перед запуском,
+подсказки при повторной попытке и список проверенных путей.
 
-## Preflight
+## Проверка открытых программ
 
-Before cleanup, WinSweep checks whether common cache-heavy apps are open:
+Перед очисткой WinSweep предупреждает, если открыты программы, чей кэш может
+не очиститься полностью:
 
 - Spotify
 - Telegram Desktop
 - Discord
 - Slack
 - Teams
-- browsers
+- браузеры
 - Steam
 - Epic Games Launcher
 - Battle.net
@@ -155,86 +155,32 @@ Before cleanup, WinSweep checks whether common cache-heavy apps are open:
 - Ubisoft Connect
 - Rockstar Launcher
 
-It does not kill processes. It only warns you when closing an app could free
-more cache files.
+WinSweep не завершает процессы сам, а только подсказывает, когда закрытие
+программы поможет освободить больше места.
 
-## Disk Analyzer Lite
+## Анализатор дисков
 
-Run:
+Запуск:
 
 ```bat
 disk-analyzer-lite.bat
 ```
 
-It scans fixed drives and shows the largest top-level folders and user
-hotspots. It never deletes files.
+Он ищет крупные папки на локальных дисках и в пользовательских каталогах. Этот
+режим ничего не удаляет.
 
-## Release Zip
+## Безопасность
 
-Run:
+WinSweep намеренно не удаляет:
 
-```bat
-build-release.bat
-```
+- Загрузки, Рабочий стол, Документы, фото, видео и проекты.
+- Пароли, cookies и активные сессии браузера.
+- Целые папки программ.
+- Сохранения игр.
+- Файлы внутри `WinSxS` вручную.
+- COM, драйверы, записи удаления программ и файловые ассоциации.
+- Корзину, пока не указан `-ClearRecycleBin` или не включена соответствующая
+  настройка.
 
-It creates:
-
-```text
-dist\WinSweep-vX.Y.Z.zip
-```
-
-## GitHub Releases
-
-The repository includes `.github/workflows/release.yml`.
-
-Automatic release by tag:
-
-```bash
-git tag v0.4.3
-git push origin v0.4.3
-```
-
-GitHub Actions will build `dist\WinSweep-v0.4.3.zip` and publish it on the
-GitHub Releases page.
-
-Manual release:
-
-1. Open the repository on GitHub.
-2. Go to `Actions`.
-3. Select `Release`.
-4. Click `Run workflow`.
-5. Enter a version such as `0.4.3`.
-
-The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`.
-
-If GitHub Actions are unavailable, publish from your PC with a free GitHub
-personal access token. Save the token once:
-
-```powershell
-.\save-github-token.ps1
-```
-
-Then publish whenever needed:
-
-```powershell
-.\publish-release.ps1 -Version 0.4.3
-```
-
-Use `.\publish-release.ps1 -Version 0.4.3 -DryRun` to test the package step
-without creating a GitHub Release. This local path does not require GitHub
-Actions, billing, Git, or GitHub CLI. See `RELEASES.md` for details.
-
-## Safety Notes
-
-WinSweep intentionally avoids:
-
-- Downloads, Desktop, Documents, photos, videos, projects.
-- Browser passwords, cookies, sessions.
-- Whole application folders.
-- Game saves.
-- Manual deletion inside `WinSxS`.
-- COM, drivers, uninstall records, file associations.
-- Recycle Bin unless `-ClearRecycleBin` or config enables it.
-
-Registry cleanup is limited to MRU/recent-history style keys and creates `.reg`
-backups before deletion.
+Очистка реестра ограничена ключами с историей недавних файлов и действий. Перед
+удалением WinSweep создаёт резервные копии `.reg`.
