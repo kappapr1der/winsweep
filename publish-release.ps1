@@ -143,15 +143,18 @@ function Get-GitHubErrorText {
     return "$status $body"
 }
 
-function New-GitHubHeaders {
+function New-GitHubHttpClient {
     param([string]$AuthToken)
 
-    return @{
-        "Accept"               = "application/vnd.github+json"
-        "Authorization"        = "Bearer $AuthToken"
-        "X-GitHub-Api-Version" = "2022-11-28"
-        "User-Agent"           = "WinSweepReleasePublisher"
-    }
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [TimeSpan]::FromSeconds($RequestTimeoutSeconds)
+    $client.DefaultRequestHeaders.Accept.Add(
+        [System.Net.Http.Headers.MediaTypeWithQualityHeaderValue]::new("application/vnd.github+json")
+    )
+    $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $AuthToken)
+    $client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28")
+    $client.DefaultRequestHeaders.UserAgent.ParseAdd("WinSweepReleasePublisher")
+    return $client
 }
 
 function Invoke-GitHubJson {
@@ -164,29 +167,38 @@ function Invoke-GitHubJson {
         [switch]$AllowNotFound
     )
 
-    $params = @{
-        Method      = $Method
-        Uri         = $Uri
-        Headers     = New-GitHubHeaders -AuthToken $AuthToken
-        ErrorAction = "Stop"
-        TimeoutSec  = $RequestTimeoutSeconds
-    }
-
-    if ($null -ne $Body) {
-        $params.Body = ($Body | ConvertTo-Json -Depth 12)
-        $params.ContentType = "application/json"
-    }
-
+    $client = New-GitHubHttpClient -AuthToken $AuthToken
+    $request = $null
+    $response = $null
     try {
-        return Invoke-RestMethod @params
-    }
-    catch {
-        $response = $_.Exception.Response
-        if ($AllowNotFound -and $response -and [int]$response.StatusCode -eq 404) {
+        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::new($Method), $Uri)
+        if ($null -ne $Body) {
+            $json = $Body | ConvertTo-Json -Depth 12
+            $request.Content = [System.Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, "application/json")
+        }
+
+        $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        $responseText = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+        $status = [int]$response.StatusCode
+
+        if ($AllowNotFound -and $status -eq 404) {
             return $null
         }
 
-        throw "GitHub API $Method $Uri failed$(Get-GitHubErrorText -ErrorRecord $_)"
+        if (-not $response.IsSuccessStatusCode) {
+            throw "GitHub API $Method $Uri failed ($status $($response.ReasonPhrase)) $responseText"
+        }
+
+        if ([string]::IsNullOrWhiteSpace($responseText)) {
+            return $null
+        }
+
+        return $responseText | ConvertFrom-Json
+    }
+    finally {
+        if ($response) { $response.Dispose() }
+        if ($request) { $request.Dispose() }
+        $client.Dispose()
     }
 }
 
@@ -197,18 +209,30 @@ function Invoke-GitHubUpload {
         [string]$FilePath
     )
 
+    $client = New-GitHubHttpClient -AuthToken $AuthToken
+    $request = $null
+    $response = $null
+    $stream = $null
     try {
-        return Invoke-RestMethod `
-            -Method Post `
-            -Uri $Uri `
-            -Headers (New-GitHubHeaders -AuthToken $AuthToken) `
-            -ContentType "application/zip" `
-            -InFile $FilePath `
-            -TimeoutSec $RequestTimeoutSeconds `
-            -ErrorAction Stop
+        $stream = [IO.File]::OpenRead($FilePath)
+        $content = [System.Net.Http.StreamContent]::new($stream)
+        $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new("application/zip")
+        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $Uri)
+        $request.Content = $content
+        $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        $responseText = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+
+        if (-not $response.IsSuccessStatusCode) {
+            throw "GitHub release asset upload failed ($([int]$response.StatusCode) $($response.ReasonPhrase)) $responseText"
+        }
+
+        return $responseText | ConvertFrom-Json
     }
-    catch {
-        throw "GitHub release asset upload failed$(Get-GitHubErrorText -ErrorRecord $_)"
+    finally {
+        if ($response) { $response.Dispose() }
+        if ($request) { $request.Dispose() }
+        if ($stream) { $stream.Dispose() }
+        $client.Dispose()
     }
 }
 
