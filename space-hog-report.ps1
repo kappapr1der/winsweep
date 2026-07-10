@@ -475,7 +475,16 @@ if (-not $Quick) {
         Write-Host ""
         Write-Host "HTML-отчёт: $reportPath" -ForegroundColor Green
         if ($OpenReport) {
-            try { Start-Process -FilePath $reportPath | Out-Null } catch { Write-Warning "Не удалось открыть HTML-отчёт." }
+            try {
+                $chromeOpener = Join-Path $PSScriptRoot "open-report-in-chrome.ps1"
+                if (Test-Path -LiteralPath $chromeOpener -PathType Leaf) {
+                    & $chromeOpener -Path $reportPath
+                }
+                else {
+                    Start-Process -FilePath $reportPath | Out-Null
+                }
+            }
+            catch { Write-Warning "Не удалось открыть HTML-отчёт." }
         }
     }
 }

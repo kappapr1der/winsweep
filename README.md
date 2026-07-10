@@ -193,6 +193,20 @@ open-latest-report.bat
 В отчёте есть итоги, самые крупные цели очистки, предупреждения перед запуском,
 подсказки при повторной попытке и список проверенных путей.
 
+Если Google Chrome установлен, WinSweep открывает HTML-отчёты в нём. Если Chrome
+не найден, используется браузер Windows по умолчанию.
+
+Если в Планировщике осталась старая задача со ссылкой на `Windows PowerShell 5.1.lnk`,
+запусти `install-scheduled-cleanup.bat` ещё раз из Desktop-папки. WinSweep создаст
+задачи заново с прямым путём к `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`.
+
+Если в Планировщике осталась старая задача со ссылкой на `Windows PowerShell 5.1.lnk`,
+запусти `install-scheduled-cleanup.bat` ещё раз из Desktop-папки. WinSweep создаст
+задачи заново с прямым путём к `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`.
+
+Если сломан сам ярлык PowerShell в меню Пуск, запусти `repair-powershell-shortcut.bat`.
+Он восстановит обычный ярлык и добавит отдельный вариант с повышением прав.
+
 ## Проверка открытых программ
 
 Перед очисткой WinSweep предупреждает, если открыты программы, чей кэш может

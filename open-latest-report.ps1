@@ -35,4 +35,10 @@ if ($latest.Count -eq 0) {
 }
 
 Write-Host "Opening report: $($latest[0].FullName)"
-Start-Process -FilePath $latest[0].FullName
+$chromeOpener = Join-Path $PSScriptRoot "open-report-in-chrome.ps1"
+if (Test-Path -LiteralPath $chromeOpener -PathType Leaf) {
+    & $chromeOpener -Path $latest[0].FullName
+}
+else {
+    Start-Process -FilePath $latest[0].FullName
+}

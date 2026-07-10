@@ -38,6 +38,7 @@ echo A. Install scheduled tasks (admin)
 echo B. Edit config
 echo C. Cache switches, disk thresholds, and exclusions
 echo D. Disk analyzer lite
+echo P. Repair PowerShell shortcuts
 echo M. System maintenance check (no deletion)
 echo Q. Quit
 echo.
@@ -108,6 +109,11 @@ if /i "%PICK%"=="c" (
 
 if /i "%PICK%"=="d" (
     call "%~dp0disk-analyzer-lite.bat"
+    goto menu
+)
+
+if /i "%PICK%"=="p" (
+    call "%~dp0repair-powershell-shortcut.bat"
     goto menu
 )
 

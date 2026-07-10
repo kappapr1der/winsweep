@@ -837,7 +837,13 @@ function Write-HtmlReport {
         Write-Log "HTML report saved: $reportPath"
 
         if ($OpenReport -and -not $Quiet) {
-            Start-Process -FilePath $reportPath -ErrorAction SilentlyContinue
+            $chromeOpener = Join-Path $PSScriptRoot "open-report-in-chrome.ps1"
+            if (Test-Path -LiteralPath $chromeOpener -PathType Leaf) {
+                & $chromeOpener -Path $reportPath
+            }
+            else {
+                Start-Process -FilePath $reportPath -ErrorAction SilentlyContinue
+            }
         }
     }
     catch {
