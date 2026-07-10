@@ -14,7 +14,6 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-Add-Type -AssemblyName System.Net.Http
 
 $root = Split-Path -Parent $PSCommandPath
 $cleanupScript = Join-Path $root "cleanup-windows.ps1"
@@ -110,52 +109,66 @@ function Get-ReleaseToken {
     return $plain.Trim()
 }
 
-function Get-GitHubErrorText {
-    param([System.Management.Automation.ErrorRecord]$ErrorRecord)
-
-    $response = $ErrorRecord.Exception.Response
-    $status = ""
-    $body = ""
-
-    if ($response) {
-        try {
-            $status = " ($([int]$response.StatusCode) $($response.StatusDescription))"
-        }
-        catch {
-            $status = ""
-        }
-
-        try {
-            $stream = $response.GetResponseStream()
-            if ($stream) {
-                $reader = New-Object IO.StreamReader($stream)
-                $body = $reader.ReadToEnd()
-            }
-        }
-        catch {
-            $body = ""
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($body)) {
-        $body = $ErrorRecord.Exception.Message
-    }
-
-    return "$status $body"
-}
-
-function New-GitHubHttpClient {
-    param([string]$AuthToken)
-
-    $client = [System.Net.Http.HttpClient]::new()
-    $client.Timeout = [TimeSpan]::FromSeconds($RequestTimeoutSeconds)
-    $client.DefaultRequestHeaders.Accept.Add(
-        [System.Net.Http.Headers.MediaTypeWithQualityHeaderValue]::new("application/vnd.github+json")
+function Invoke-GitHubCurl {
+    param(
+        [ValidateSet("GET", "POST", "PATCH", "DELETE")]
+        [string]$Method,
+        [string]$Uri,
+        [string]$AuthToken,
+        [string]$ContentPath = "",
+        [string]$ContentType = ""
     )
-    $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Bearer", $AuthToken)
-    $client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28")
-    $client.DefaultRequestHeaders.UserAgent.ParseAdd("WinSweepReleasePublisher")
-    return $client
+
+    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
+        throw "curl.exe was not found. Windows includes it by default; install curl or use a supported Windows version."
+    }
+
+    $responsePath = [IO.Path]::GetTempFileName()
+    try {
+        $curlArgs = @(
+            "--silent",
+            "--show-error",
+            "--request", $Method,
+            "--header", "Authorization: Bearer $AuthToken",
+            "--header", "Accept: application/vnd.github+json",
+            "--header", "X-GitHub-Api-Version: 2022-11-28",
+            "--header", "User-Agent: WinSweepReleasePublisher",
+            "--output", $responsePath,
+            "--write-out", "%{http_code}",
+            "--max-time", [string]$RequestTimeoutSeconds
+        )
+
+        if (-not [string]::IsNullOrWhiteSpace($ContentPath)) {
+            if (-not (Test-Path -LiteralPath $ContentPath -PathType Leaf)) {
+                throw "GitHub request content file was not found: $ContentPath"
+            }
+
+            $curlArgs += @(
+                "--header", "Content-Type: $ContentType",
+                "--data-binary", "@$ContentPath"
+            )
+        }
+
+        $statusText = & curl.exe @curlArgs $Uri
+        $exitCode = $LASTEXITCODE
+        $responseText = [IO.File]::ReadAllText($responsePath, [Text.UTF8Encoding]::new($false))
+        if ($exitCode -ne 0) {
+            throw "GitHub API $Method $Uri failed: curl.exe exited with code $exitCode. $responseText"
+        }
+
+        [int]$statusCode = 0
+        if (-not [int]::TryParse($statusText.Trim(), [ref]$statusCode)) {
+            throw "GitHub API $Method $Uri did not return an HTTP status code."
+        }
+
+        return [pscustomobject]@{
+            StatusCode = $statusCode
+            BodyText   = $responseText
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $responsePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Invoke-GitHubJson {
@@ -168,38 +181,39 @@ function Invoke-GitHubJson {
         [switch]$AllowNotFound
     )
 
-    $client = New-GitHubHttpClient -AuthToken $AuthToken
-    $request = $null
-    $response = $null
+    $bodyPath = ""
     try {
-        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::new($Method), $Uri)
         if ($null -ne $Body) {
+            $bodyPath = [IO.Path]::GetTempFileName()
             $json = $Body | ConvertTo-Json -Depth 12
-            $request.Content = [System.Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, "application/json")
+            [IO.File]::WriteAllText($bodyPath, $json, [Text.UTF8Encoding]::new($false))
         }
 
-        $response = $client.SendAsync($request).GetAwaiter().GetResult()
-        $responseText = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
-        $status = [int]$response.StatusCode
+        $response = Invoke-GitHubCurl `
+            -Method $Method `
+            -Uri $Uri `
+            -AuthToken $AuthToken `
+            -ContentPath $bodyPath `
+            -ContentType "application/json"
 
-        if ($AllowNotFound -and $status -eq 404) {
+        if ($AllowNotFound -and $response.StatusCode -eq 404) {
             return $null
         }
 
-        if (-not $response.IsSuccessStatusCode) {
-            throw "GitHub API $Method $Uri failed ($status $($response.ReasonPhrase)) $responseText"
+        if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+            throw "GitHub API $Method $Uri failed ($($response.StatusCode)) $($response.BodyText)"
         }
 
-        if ([string]::IsNullOrWhiteSpace($responseText)) {
+        if ([string]::IsNullOrWhiteSpace($response.BodyText)) {
             return $null
         }
 
-        return $responseText | ConvertFrom-Json
+        return $response.BodyText | ConvertFrom-Json
     }
     finally {
-        if ($response) { $response.Dispose() }
-        if ($request) { $request.Dispose() }
-        $client.Dispose()
+        if (-not [string]::IsNullOrWhiteSpace($bodyPath)) {
+            Remove-Item -LiteralPath $bodyPath -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -210,31 +224,18 @@ function Invoke-GitHubUpload {
         [string]$FilePath
     )
 
-    $client = New-GitHubHttpClient -AuthToken $AuthToken
-    $request = $null
-    $response = $null
-    $stream = $null
-    try {
-        $stream = [IO.File]::OpenRead($FilePath)
-        $content = [System.Net.Http.StreamContent]::new($stream)
-        $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::new("application/zip")
-        $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Post, $Uri)
-        $request.Content = $content
-        $response = $client.SendAsync($request).GetAwaiter().GetResult()
-        $responseText = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    $response = Invoke-GitHubCurl `
+        -Method "POST" `
+        -Uri $Uri `
+        -AuthToken $AuthToken `
+        -ContentPath $FilePath `
+        -ContentType "application/zip"
 
-        if (-not $response.IsSuccessStatusCode) {
-            throw "GitHub release asset upload failed ($([int]$response.StatusCode) $($response.ReasonPhrase)) $responseText"
-        }
+    if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
+        throw "GitHub release asset upload failed ($($response.StatusCode)) $($response.BodyText)"
+    }
 
-        return $responseText | ConvertFrom-Json
-    }
-    finally {
-        if ($response) { $response.Dispose() }
-        if ($request) { $request.Dispose() }
-        if ($stream) { $stream.Dispose() }
-        $client.Dispose()
-    }
+    return $response.BodyText | ConvertFrom-Json
 }
 
 if (-not (Test-Path -LiteralPath $cleanupScript -PathType Leaf)) {
