@@ -25,9 +25,8 @@ Use this when Actions are unavailable, or when you want to publish from your PC
 without adding billing details to GitHub:
 
 ```powershell
-$env:WINSWEEP_GITHUB_TOKEN = "paste_your_token_here"
+.\save-github-token.ps1
 .\publish-release.ps1 -Version 0.4.3
-Remove-Item Env:\WINSWEEP_GITHUB_TOKEN
 ```
 
 Requirements:
@@ -35,6 +34,9 @@ Requirements:
 - a GitHub personal access token
 - repository access to `kappapr1der/winsweep`
 - repository permission `Contents: Read and write`
+
+The token is saved to `%APPDATA%\WinSweep\github-token.txt` encrypted for the
+current Windows user with DPAPI. It is not stored in this repository.
 
 Recommended token setup:
 
@@ -59,7 +61,14 @@ Useful options:
 .\publish-release.ps1 -Version 0.4.3 -Prerelease
 .\publish-release.ps1 -Version 0.4.3 -Draft
 .\publish-release.ps1 -Version 0.4.3 -TargetCommitish main
+.\save-github-token.ps1 -Clear
 ```
 
-If `WINSWEEP_GITHUB_TOKEN`, `GITHUB_TOKEN`, or `GH_TOKEN` is not set, the script
-will ask for the token with hidden input.
+Token lookup order:
+
+1. `-Token`
+2. `WINSWEEP_GITHUB_TOKEN`
+3. `GITHUB_TOKEN`
+4. `GH_TOKEN`
+5. saved DPAPI token from `save-github-token.ps1`
+6. hidden prompt

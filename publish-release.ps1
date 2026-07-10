@@ -44,6 +44,37 @@ function Get-PlainTextSecret {
     }
 }
 
+function Get-TokenStorePath {
+    $base = [Environment]::GetFolderPath("ApplicationData")
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $HOME "AppData\Roaming"
+    }
+
+    return Join-Path (Join-Path $base "WinSweep") "github-token.txt"
+}
+
+function Get-StoredReleaseToken {
+    $path = Get-TokenStorePath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return ""
+    }
+
+    try {
+        $encrypted = Get-Content -LiteralPath $path -Raw -Encoding ASCII
+        $secure = $encrypted | ConvertTo-SecureString
+        $plain = Get-PlainTextSecret -SecureValue $secure
+        if (-not [string]::IsNullOrWhiteSpace($plain)) {
+            Write-Host "Using saved token from $path."
+            return $plain.Trim()
+        }
+    }
+    catch {
+        Write-Warning "Saved token exists but could not be decrypted. Run save-github-token.ps1 again."
+    }
+
+    return ""
+}
+
 function Get-ReleaseToken {
     param([string]$ExplicitToken)
 
@@ -59,8 +90,14 @@ function Get-ReleaseToken {
         }
     }
 
+    $stored = Get-StoredReleaseToken
+    if (-not [string]::IsNullOrWhiteSpace($stored)) {
+        return $stored
+    }
+
     Write-Host "GitHub token was not found in WINSWEEP_GITHUB_TOKEN, GITHUB_TOKEN, or GH_TOKEN."
     Write-Host "Create a fine-grained token with repository Contents: Read and write, then paste it below."
+    Write-Host "Tip: run save-github-token.ps1 once to avoid pasting the token every time."
     $secure = Read-Host "GitHub token (hidden)" -AsSecureString
     $plain = Get-PlainTextSecret -SecureValue $secure
     if ([string]::IsNullOrWhiteSpace($plain)) {

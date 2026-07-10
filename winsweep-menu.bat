@@ -37,6 +37,7 @@ echo 9. Open logs
 echo A. Install scheduled tasks (admin)
 echo B. Edit config
 echo R. Build release zip
+echo T. Save GitHub token
 echo P. Publish GitHub release
 echo Q. Quit
 echo.
@@ -102,6 +103,11 @@ if /i "%PICK%"=="b" (
 
 if /i "%PICK%"=="r" (
     call "%~dp0build-release.bat"
+    goto menu
+)
+
+if /i "%PICK%"=="t" (
+    call "%~dp0save-github-token.bat"
     goto menu
 )
 

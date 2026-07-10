@@ -58,6 +58,8 @@ $files = @(
     "build-release.bat",
     "publish-release.ps1",
     "publish-release.bat",
+    "save-github-token.ps1",
+    "save-github-token.bat",
     "install-scheduled-cleanup.ps1",
     "install-scheduled-cleanup.bat",
     "uninstall-scheduled-cleanup.bat",

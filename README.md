@@ -44,6 +44,7 @@ winsweep-menu.bat
 - Install scheduled tasks.
 - Edit config.
 - Build release zip.
+- Save GitHub token.
 - Publish GitHub release.
 
 ## Profiles
@@ -207,12 +208,16 @@ Manual release:
 The workflow uses the built-in `GITHUB_TOKEN` with `contents: write`.
 
 If GitHub Actions are unavailable, publish from your PC with a free GitHub
-personal access token:
+personal access token. Save the token once:
 
 ```powershell
-$env:WINSWEEP_GITHUB_TOKEN = "paste_your_token_here"
+.\save-github-token.ps1
+```
+
+Then publish whenever needed:
+
+```powershell
 .\publish-release.ps1 -Version 0.4.3
-Remove-Item Env:\WINSWEEP_GITHUB_TOKEN
 ```
 
 Use `.\publish-release.ps1 -Version 0.4.3 -DryRun` to test the package step
