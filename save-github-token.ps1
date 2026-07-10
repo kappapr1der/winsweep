@@ -54,7 +54,7 @@ $dir = Split-Path -Parent $path
 New-Item -ItemType Directory -Path $dir -Force | Out-Null
 
 $encrypted = ConvertFrom-SecureString -SecureString $secure
-Set-Content -LiteralPath $path -Value $encrypted -Encoding ASCII
+[IO.File]::WriteAllText($path, $encrypted, [Text.Encoding]::ASCII)
 
 Write-Host "GitHub token saved:"
 Write-Host $path

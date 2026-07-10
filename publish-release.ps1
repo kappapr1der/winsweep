@@ -60,7 +60,7 @@ function Get-StoredReleaseToken {
     }
 
     try {
-        $encrypted = Get-Content -LiteralPath $path -Raw -Encoding ASCII
+        $encrypted = (Get-Content -LiteralPath $path -Raw -Encoding ASCII).Trim()
         $secure = $encrypted | ConvertTo-SecureString
         $plain = Get-PlainTextSecret -SecureValue $secure
         if (-not [string]::IsNullOrWhiteSpace($plain)) {
