@@ -1,23 +1,55 @@
-# WinSweep config
+# Настройки WinSweep
 
-WinSweep reads `winsweep-config.json` from the same folder as
-`cleanup-windows.ps1`. Command-line flags always win over config values.
+WinSweep читает `winsweep-config.json` из той же папки, где лежит
+`cleanup-windows.ps1`. Параметры, переданные в командной строке, важнее значений
+из файла.
 
-Useful fields:
+Самый удобный способ менять настройки - пункт `C` в `winsweep-menu.bat`.
 
-- `defaultProfile`: `Safe`, `Gaming`, `Deep`, `Emergency`, or empty string.
-- `thresholds.minFreeGB`: pressure guard starts cleanup below this many GB.
-- `thresholds.minFreePercent`: pressure guard starts cleanup below this percent.
-- `thresholds.tempOlderThanDays`: age cutoff for temp files.
-- `thresholds.cacheOlderThanDays`: age cutoff for cache files.
-- `paths.extraPathsFile`: usually `extra-cache-paths.txt`.
-- `paths.logDir`: leave empty for the automatic ProgramData/TEMP log folder.
-- `features.registry`: enables safe MRU/recent-history registry cleanup.
-- `features.developerCaches`: enables npm/pip/NuGet/Gradle cache cleanup.
-- `features.clearRecycleBin`: disabled by default.
-- `schedule.guardStart`: first daily pressure-guard check, for example `00:15`.
-- `schedule.guardEveryHours`: pressure-guard check interval.
-- `schedule.deepWeekly`: weekly deep-clean time, for example `03:20`.
-- `schedule.deepDay`: weekday for deep cleanup.
+## Основные поля
 
-Run `winsweep-menu.bat` for the easiest local workflow.
+- `defaultProfile`: `Safe`, `Gaming`, `Deep`, `Emergency` или пустая строка.
+- `thresholds.minFreeGB`: общий порог свободного места в ГБ.
+- `thresholds.minFreePercent`: общий порог свободного места в процентах.
+- `thresholds.perDrive`: отдельные пороги для дисков. Пример:
+
+```json
+"perDrive": {
+  "C:": { "minFreeGB": 35, "minFreePercent": 18 },
+  "D:": { "minFreeGB": 60, "minFreePercent": 10 }
+}
+```
+
+- `thresholds.tempOlderThanDays`: возраст временных файлов для очистки.
+- `thresholds.cacheOlderThanDays`: возраст файлов кэша для очистки.
+- `paths.extraPathsFile`: обычно `extra-cache-paths.txt`.
+- `paths.logDir`: оставь пустым, чтобы WinSweep сам выбрал папку журналов.
+- `paths.excludedPaths`: папки, которые WinSweep никогда не удаляет.
+
+## Кэши программ
+
+В секции `features` используются отдельные переключатели:
+
+- `spotifyCache`
+- `discordCache`
+- `telegramCache`
+- `slackCache`
+- `teamsCache`
+- `zoomCache`
+- `browserCaches`
+- `developerCaches`
+- `gameCaches`
+
+`appCaches` оставлен для совместимости и включает все кэши программ разом.
+Обычно лучше использовать отдельные переключатели.
+
+Другие полезные поля:
+
+- `features.registry`: безопасная очистка истории недавних файлов в реестре.
+- `features.clearRecycleBin`: по умолчанию выключена.
+- `features.notifyOnPressure`: уведомлять при срабатывании контроля места.
+- `schedule.guardStart`: первое ежедневное срабатывание контроля места,
+  например `00:15`.
+- `schedule.guardEveryHours`: интервал проверки свободного места.
+- `schedule.deepWeekly`: время еженедельной глубокой очистки.
+- `schedule.deepDay`: день недели для глубокой очистки.

@@ -3,7 +3,9 @@ param(
     [switch]$AllFixedDrives,
     [string[]]$Drives = @(),
     [int]$Top = 12,
-    [switch]$SkipFolderScan
+    [switch]$SkipFolderScan,
+    [string]$LogDir = "",
+    [switch]$SkipHistory
 )
 
 Set-StrictMode -Version Latest
@@ -65,6 +67,136 @@ function Get-FixedDrives {
     return $driveInfoDisks
 }
 
+function Resolve-HistoryFile {
+    param([string]$PreferredLogDir)
+
+    $candidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($PreferredLogDir)) {
+        $candidates += $PreferredLogDir
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:ProgramData)) {
+        $candidates += (Join-Path $env:ProgramData "CodexWindowsCleanup\Logs")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) {
+        $candidates += (Join-Path $env:TEMP "CodexWindowsCleanup\Logs")
+    }
+
+    foreach ($candidate in @($candidates | Select-Object -Unique)) {
+        try {
+            New-Item -ItemType Directory -Path $candidate -Force -ErrorAction Stop | Out-Null
+            return (Join-Path $candidate "space-history.jsonl")
+        }
+        catch {
+            continue
+        }
+    }
+
+    return ""
+}
+
+function Get-LatestSpaceSnapshot {
+    param([string]$HistoryFile)
+
+    if ([string]::IsNullOrWhiteSpace($HistoryFile) -or -not (Test-Path -LiteralPath $HistoryFile -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+
+    try {
+        $lastLine = Get-Content -LiteralPath $HistoryFile -ErrorAction Stop |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            Select-Object -Last 1
+        if (-not [string]::IsNullOrWhiteSpace($lastLine)) {
+            return ($lastLine | ConvertFrom-Json -ErrorAction Stop)
+        }
+    }
+    catch {
+        Write-Warning "Could not read previous disk snapshot. $($_.Exception.Message)"
+    }
+
+    return $null
+}
+
+function New-SpaceSnapshot {
+    param($Disks)
+
+    return [pscustomobject]@{
+        TimeUtc = (Get-Date).ToUniversalTime().ToString("o")
+        Drives  = @($Disks | ForEach-Object {
+            [pscustomobject]@{
+                Drive = $_.DeviceID
+                FreeBytes = [int64]$_.FreeSpace
+                TotalBytes = [int64]$_.Size
+            }
+        })
+    }
+}
+
+function Save-SpaceSnapshot {
+    param(
+        [string]$HistoryFile,
+        $Snapshot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($HistoryFile)) {
+        return
+    }
+
+    try {
+        $json = $Snapshot | ConvertTo-Json -Depth 5 -Compress
+        [IO.File]::AppendAllText($HistoryFile, $json + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+
+        $lines = @(Get-Content -LiteralPath $HistoryFile -ErrorAction Stop)
+        if ($lines.Count -gt 180) {
+            [IO.File]::WriteAllLines($HistoryFile, @($lines | Select-Object -Last 180), [Text.UTF8Encoding]::new($false))
+        }
+    }
+    catch {
+        Write-Warning "Could not save disk snapshot. $($_.Exception.Message)"
+    }
+}
+
+function Get-PreviousDriveSnapshot {
+    param(
+        $Snapshot,
+        [string]$Drive
+    )
+
+    if ($null -eq $Snapshot) {
+        return $null
+    }
+
+    foreach ($item in @($Snapshot.Drives)) {
+        if ($item.Drive -eq $Drive) {
+            return $item
+        }
+    }
+
+    return $null
+}
+
+function Format-UsedSpaceChange {
+    param(
+        $Disk,
+        $PreviousSnapshot
+    )
+
+    $previous = Get-PreviousDriveSnapshot -Snapshot $PreviousSnapshot -Drive $Disk.DeviceID
+    if ($null -eq $previous) {
+        return "first snapshot"
+    }
+
+    $freeChange = [int64]$Disk.FreeSpace - [int64]$previous.FreeBytes
+    if ($freeChange -eq 0) {
+        return "no change"
+    }
+
+    if ($freeChange -lt 0) {
+        return ("used +{0}" -f (Format-ByteSize -Bytes ([Math]::Abs($freeChange))))
+    }
+
+    return ("freed {0}" -f (Format-ByteSize -Bytes $freeChange))
+}
+
 function Measure-DirectoryBytes {
     param([string]$Path)
 
@@ -81,7 +213,7 @@ function Measure-DirectoryBytes {
 }
 
 function Show-DriveOverview {
-    param($Disk)
+    param($Disk, $PreviousSnapshot)
 
     $free = [int64]$Disk.FreeSpace
     $size = [int64]$Disk.Size
@@ -94,6 +226,7 @@ function Show-DriveOverview {
         Free = (Format-ByteSize -Bytes $free)
         Total = (Format-ByteSize -Bytes $size)
         FreePercent = "$freePercent%"
+        ChangeSinceLast = (Format-UsedSpaceChange -Disk $Disk -PreviousSnapshot $PreviousSnapshot)
     }
 }
 
@@ -184,7 +317,23 @@ else {
 
 Write-Host ""
 Write-Host "== Drive overview ==" -ForegroundColor Green
-$disks | ForEach-Object { Show-DriveOverview -Disk $_ } | Format-Table -AutoSize
+$historyFile = if ($SkipHistory) { "" } else { Resolve-HistoryFile -PreferredLogDir $LogDir }
+$previousSnapshot = if ([string]::IsNullOrWhiteSpace($historyFile)) { $null } else { Get-LatestSpaceSnapshot -HistoryFile $historyFile }
+$currentSnapshot = New-SpaceSnapshot -Disks $disks
+if (-not $SkipHistory) {
+    Save-SpaceSnapshot -HistoryFile $historyFile -Snapshot $currentSnapshot
+}
+$disks | ForEach-Object { Show-DriveOverview -Disk $_ -PreviousSnapshot $previousSnapshot } | Format-Table -AutoSize
+
+if ($SkipHistory) {
+    Write-Host "Disk history recording is disabled for this run." -ForegroundColor DarkGray
+}
+elseif ($previousSnapshot) {
+    Write-Host "Comparison uses the previous WinSweep disk report." -ForegroundColor DarkGray
+}
+else {
+    Write-Host "First disk snapshot saved. Run this report again later to see changes." -ForegroundColor DarkGray
+}
 
 if ($SkipFolderScan) {
     return

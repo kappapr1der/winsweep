@@ -5,23 +5,36 @@
     "minFreePercent": 18,
     "tempOlderThanDays": 1,
     "cacheOlderThanDays": 3,
-    "logRetentionDays": 30
+    "logRetentionDays": 30,
+    "perDrive": {
+      "C:": {
+        "minFreeGB": 35,
+        "minFreePercent": 18
+      }
+    }
   },
   "paths": {
     "guardDrive": "C:",
     "extraPathsFile": "extra-cache-paths.txt",
-    "logDir": ""
+    "logDir": "",
+    "excludedPaths": []
   },
   "features": {
     "aggressiveSafe": false,
     "browserCaches": false,
     "appCaches": false,
-    "spotifyCache": false,
+    "spotifyCache": true,
+    "discordCache": true,
+    "telegramCache": true,
+    "slackCache": false,
+    "teamsCache": false,
+    "zoomCache": false,
     "registry": true,
     "extraPaths": false,
     "developerCaches": false,
     "gameCaches": false,
-    "clearRecycleBin": false
+    "clearRecycleBin": false,
+    "notifyOnPressure": true
   },
   "schedule": {
     "guardStart": "00:15",

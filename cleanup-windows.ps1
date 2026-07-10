@@ -8,6 +8,11 @@ param(
     [switch]$CleanBrowserCaches,
     [switch]$CleanAppCaches,
     [switch]$CleanSpotifyCache,
+    [switch]$CleanDiscordCache,
+    [switch]$CleanTelegramCache,
+    [switch]$CleanSlackCache,
+    [switch]$CleanTeamsCache,
+    [switch]$CleanZoomCache,
     [switch]$CleanRegistry,
     [switch]$CleanExtraPaths,
     [switch]$CleanDeveloperCaches,
@@ -16,6 +21,7 @@ param(
     [switch]$Detailed,
     [switch]$Quiet,
     [switch]$OpenReport,
+    [switch]$NotifyOnPressure,
     [int]$MinFreeGB = 35,
     [int]$MinFreePercent = 18,
     [string]$GuardDrive = "",
@@ -25,6 +31,7 @@ param(
     [ValidateSet("", "Safe", "Gaming", "Deep", "Emergency")]
     [string]$Profile = "",
     [string]$ExtraPathsFile = "",
+    [string[]]$ExcludedPaths = @(),
     [string]$LogDir = "",
     [string]$ConfigPath = ""
 )
@@ -32,7 +39,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
 
-$script:WinSweepVersion = "0.4.3"
+$script:WinSweepVersion = "0.5.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -44,6 +51,9 @@ $script:PreflightResults = New-Object System.Collections.ArrayList
 $script:HtmlReportPath = ""
 $script:ConfigSource = ""
 $script:ConfigLoadWarning = ""
+$script:ExcludedPaths = @()
+$script:PerDriveThresholds = $null
+$script:LastGuardSnapshot = $null
 $script:CliParameters = @{}
 foreach ($key in $PSBoundParameters.Keys) {
     $script:CliParameters[$key] = $true
@@ -127,6 +137,104 @@ function Set-SwitchFromConfig {
     Set-Variable -Name $Name -Value ([bool]$Value) -Scope Script
 }
 
+function Set-StringArrayFromConfig {
+    param(
+        [string]$Name,
+        $Value
+    )
+
+    if ($null -eq $Value -or $script:CliParameters.ContainsKey($Name)) {
+        return
+    }
+
+    Set-Variable -Name $Name -Value @($Value | ForEach-Object { [string]$_ }) -Scope Script
+}
+
+function Set-ExcludedPaths {
+    param([string[]]$Paths)
+
+    $normalized = New-Object System.Collections.ArrayList
+    foreach ($path in @($Paths)) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        try {
+            $fullPath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($path)).TrimEnd("\\")
+            if (-not [string]::IsNullOrWhiteSpace($fullPath) -and -not $normalized.Contains($fullPath)) {
+                [void]$normalized.Add($fullPath)
+            }
+        }
+        catch {
+            Write-Warning "Ignored invalid excluded path: $path"
+        }
+    }
+
+    $script:ExcludedPaths = @($normalized)
+}
+
+function Test-ExcludedPath {
+    param([string]$Path)
+
+    if ($script:ExcludedPaths.Count -eq 0 -or [string]::IsNullOrWhiteSpace($Path)) {
+        return $false
+    }
+
+    try {
+        $candidate = [IO.Path]::GetFullPath($Path).TrimEnd("\\")
+    }
+    catch {
+        return $false
+    }
+
+    foreach ($excluded in $script:ExcludedPaths) {
+        if ($candidate -ieq $excluded -or $candidate.StartsWith("$excluded\\", [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Get-PerDriveThreshold {
+    param(
+        [string]$Drive,
+        [int]$FallbackFreeGB,
+        [int]$FallbackFreePercent
+    )
+
+    $result = [pscustomobject]@{
+        MinFreeGB      = $FallbackFreeGB
+        MinFreePercent = $FallbackFreePercent
+    }
+
+    if ($null -eq $script:PerDriveThresholds -or [string]::IsNullOrWhiteSpace($Drive)) {
+        return $result
+    }
+
+    $driveKey = $Drive.TrimEnd("\\").ToUpperInvariant()
+    $entry = Get-ConfigProperty -Object $script:PerDriveThresholds -Name $driveKey
+    if ($null -eq $entry) {
+        return $result
+    }
+
+    if (-not $script:CliParameters.ContainsKey("MinFreeGB")) {
+        $configuredGB = Get-ConfigProperty -Object $entry -Name "minFreeGB"
+        if ($null -ne $configuredGB) {
+            $result.MinFreeGB = [int]$configuredGB
+        }
+    }
+
+    if (-not $script:CliParameters.ContainsKey("MinFreePercent")) {
+        $configuredPercent = Get-ConfigProperty -Object $entry -Name "minFreePercent"
+        if ($null -ne $configuredPercent) {
+            $result.MinFreePercent = [int]$configuredPercent
+        }
+    }
+
+    return $result
+}
+
 function New-LogFolder {
     param([string]$PreferredLogDir)
 
@@ -202,17 +310,24 @@ if ($null -ne $config) {
     Set-IntFromConfig -Name "TempOlderThanDays" -Value (Get-ConfigProperty -Object $thresholds -Name "tempOlderThanDays")
     Set-IntFromConfig -Name "CacheOlderThanDays" -Value (Get-ConfigProperty -Object $thresholds -Name "cacheOlderThanDays")
     Set-IntFromConfig -Name "LogRetentionDays" -Value (Get-ConfigProperty -Object $thresholds -Name "logRetentionDays")
+    $script:PerDriveThresholds = Get-ConfigProperty -Object $thresholds -Name "perDrive"
 
     $features = Get-ConfigProperty -Object $config -Name "features"
     Set-SwitchFromConfig -Name "AggressiveSafe" -Value (Get-ConfigProperty -Object $features -Name "aggressiveSafe")
     Set-SwitchFromConfig -Name "CleanBrowserCaches" -Value (Get-ConfigProperty -Object $features -Name "browserCaches")
     Set-SwitchFromConfig -Name "CleanAppCaches" -Value (Get-ConfigProperty -Object $features -Name "appCaches")
     Set-SwitchFromConfig -Name "CleanSpotifyCache" -Value (Get-ConfigProperty -Object $features -Name "spotifyCache")
+    Set-SwitchFromConfig -Name "CleanDiscordCache" -Value (Get-ConfigProperty -Object $features -Name "discordCache")
+    Set-SwitchFromConfig -Name "CleanTelegramCache" -Value (Get-ConfigProperty -Object $features -Name "telegramCache")
+    Set-SwitchFromConfig -Name "CleanSlackCache" -Value (Get-ConfigProperty -Object $features -Name "slackCache")
+    Set-SwitchFromConfig -Name "CleanTeamsCache" -Value (Get-ConfigProperty -Object $features -Name "teamsCache")
+    Set-SwitchFromConfig -Name "CleanZoomCache" -Value (Get-ConfigProperty -Object $features -Name "zoomCache")
     Set-SwitchFromConfig -Name "CleanRegistry" -Value (Get-ConfigProperty -Object $features -Name "registry")
     Set-SwitchFromConfig -Name "CleanExtraPaths" -Value (Get-ConfigProperty -Object $features -Name "extraPaths")
     Set-SwitchFromConfig -Name "CleanDeveloperCaches" -Value (Get-ConfigProperty -Object $features -Name "developerCaches")
     Set-SwitchFromConfig -Name "CleanGameCaches" -Value (Get-ConfigProperty -Object $features -Name "gameCaches")
     Set-SwitchFromConfig -Name "ClearRecycleBin" -Value (Get-ConfigProperty -Object $features -Name "clearRecycleBin")
+    Set-SwitchFromConfig -Name "NotifyOnPressure" -Value (Get-ConfigProperty -Object $features -Name "notifyOnPressure")
 
     $paths = Get-ConfigProperty -Object $config -Name "paths"
     $configuredGuardDrive = Get-ConfigProperty -Object $paths -Name "guardDrive"
@@ -229,7 +344,11 @@ if ($null -ne $config) {
     if ($null -ne $configuredLogDir -and -not $script:CliParameters.ContainsKey("LogDir")) {
         $LogDir = Resolve-WinSweepPath -Path ([string]$configuredLogDir)
     }
+
+    Set-StringArrayFromConfig -Name "ExcludedPaths" -Value (Get-ConfigProperty -Object $paths -Name "excludedPaths")
 }
+
+Set-ExcludedPaths -Paths $ExcludedPaths
 
 $LogDir = New-LogFolder -PreferredLogDir $LogDir
 $LogStamp = "{0:yyyy-MM-dd-HHmmss-fff}-pid{1}" -f (Get-Date), $PID
@@ -538,10 +657,16 @@ function Invoke-PreflightCheck {
     if ($CleanSpotifyCache -or $CleanAppCaches -or $AggressiveSafe) {
         Add-PreflightResult -App "Spotify" -Processes @("Spotify") -Reason "Spotify Store/classic cache can be locked while it is running."
     }
-    if ($CleanAppCaches -or $AggressiveSafe) {
+    if ($CleanAppCaches -or $CleanTelegramCache -or $AggressiveSafe) {
         Add-PreflightResult -App "Telegram Desktop" -Processes @("Telegram") -Reason "Telegram media cache may stay locked while Telegram is open."
+    }
+    if ($CleanAppCaches -or $CleanDiscordCache -or $AggressiveSafe) {
         Add-PreflightResult -App "Discord" -Processes @("Discord") -Reason "Discord cache and GPU cache may stay locked."
+    }
+    if ($CleanAppCaches -or $CleanSlackCache -or $AggressiveSafe) {
         Add-PreflightResult -App "Slack" -Processes @("Slack") -Reason "Slack cache may stay locked."
+    }
+    if ($CleanAppCaches -or $CleanTeamsCache -or $AggressiveSafe) {
         Add-PreflightResult -App "Microsoft Teams" -Processes @("Teams", "ms-teams") -Reason "Teams cache may stay locked."
     }
     if ($CleanBrowserCaches -or $AggressiveSafe) {
@@ -810,6 +935,7 @@ function Test-ShouldRunSmartGuard {
     )
 
     $snapshot = Get-DriveSnapshot -Drive $Drive
+    $script:LastGuardSnapshot = $snapshot
     if ($null -eq $snapshot) {
         Write-Log "Smart guard could not read disk state, continuing with cleanup." "WARN"
         return $true
@@ -833,6 +959,35 @@ function Test-ShouldRunSmartGuard {
 
     Write-Log ("Smart guard skipped cleanup: {0} still has {1} free ({2}%)." -f $snapshot.Drive, (Format-ByteSize $snapshot.FreeBytes), $snapshot.FreePercent)
     return $false
+}
+
+function Show-PressureNotification {
+    param(
+        $Snapshot,
+        [int]$MinimumFreeGB,
+        [int]$MinimumFreePercent
+    )
+
+    if (-not $NotifyOnPressure -or $Quiet -or $null -eq $Snapshot) {
+        return
+    }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $notify = New-Object System.Windows.Forms.NotifyIcon
+        $notify.Icon = [System.Drawing.SystemIcons]::Warning
+        $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
+        $notify.BalloonTipTitle = "WinSweep: мало места"
+        $notify.BalloonTipText = ("{0}: свободно {1} ({2}%). Порог: {3} GB или {4}%. Запускаю безопасную очистку." -f $Snapshot.Drive, (Format-ByteSize $Snapshot.FreeBytes), $Snapshot.FreePercent, $MinimumFreeGB, $MinimumFreePercent)
+        $notify.Visible = $true
+        $notify.ShowBalloonTip(8000)
+        Start-Sleep -Seconds 8
+        $notify.Dispose()
+    }
+    catch {
+        Write-Log "Could not show low-space notification. $($_.Exception.Message)" "WARN"
+    }
 }
 
 function Test-SafeCleanupDirectory {
@@ -901,6 +1056,12 @@ function Remove-OldContents {
         return
     }
 
+    if (Test-ExcludedPath -Path $Path) {
+        Write-Log "Skipped excluded path for ${Label}: $Path"
+        Add-CleanupResult -Label $Label -Path $Path -Days $OlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "excluded"
+        return
+    }
+
     try {
         $pathExists = Test-Path -LiteralPath $Path -PathType Container -ErrorAction Stop
     }
@@ -931,7 +1092,7 @@ function Remove-OldContents {
 
     try {
         $files = Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue |
-            Where-Object { $_.LastWriteTime -lt $cutoff }
+            Where-Object { $_.LastWriteTime -lt $cutoff -and -not (Test-ExcludedPath -Path $_.FullName) }
     }
     catch {
         Write-Log "Could not enumerate files in $Path. $($_.Exception.Message)" "WARN"
@@ -977,6 +1138,10 @@ function Remove-OldContents {
     }
 
     foreach ($directory in $directories) {
+        if (Test-ExcludedPath -Path $directory.FullName) {
+            continue
+        }
+
         if ($directory.LastWriteTime -ge $cutoff) {
             continue
         }
@@ -1111,6 +1276,61 @@ function Add-SpotifyCacheTargets {
     }
 }
 
+function Add-DiscordCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    foreach ($discordName in @("discord", "discordptb", "discordcanary")) {
+        Add-Target -Targets $Targets -Label "$discordName cache" -Path (Join-Path $env:APPDATA "$discordName\Cache") -Days $Days
+        Add-Target -Targets $Targets -Label "$discordName code cache" -Path (Join-Path $env:APPDATA "$discordName\Code Cache") -Days $Days
+        Add-Target -Targets $Targets -Label "$discordName GPU cache" -Path (Join-Path $env:APPDATA "$discordName\GPUCache") -Days $Days
+    }
+}
+
+function Add-SlackCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Slack cache" -Path (Join-Path $env:APPDATA "Slack\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Slack code cache" -Path (Join-Path $env:APPDATA "Slack\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Slack GPU cache" -Path (Join-Path $env:APPDATA "Slack\GPUCache") -Days $Days
+}
+
+function Add-TelegramCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Telegram Desktop cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Telegram Desktop media cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\media_cache") -Days $Days
+}
+
+function Add-ZoomCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Zoom webview cache" -Path (Join-Path $env:APPDATA "Zoom\data\WebviewCache") -Days $Days
+}
+
+function Add-TeamsCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Microsoft Teams cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Microsoft Teams code cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Microsoft Teams GPU cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\GPUCache") -Days $Days
+    Add-WildcardTargets -Targets $Targets -Label "new Teams package cache" -Pattern (Join-Path $env:LOCALAPPDATA "Packages\MSTeams_*\LocalCache\Microsoft\MSTeams\Cache") -Days $Days
+}
+
 function Add-AppCacheTargets {
     param(
         [System.Collections.ArrayList]$Targets,
@@ -1118,23 +1338,11 @@ function Add-AppCacheTargets {
     )
 
     Add-SpotifyCacheTargets -Targets $Targets -Days $Days
-
-    foreach ($discordName in @("discord", "discordptb", "discordcanary")) {
-        Add-Target -Targets $Targets -Label "$discordName cache" -Path (Join-Path $env:APPDATA "$discordName\Cache") -Days $Days
-        Add-Target -Targets $Targets -Label "$discordName code cache" -Path (Join-Path $env:APPDATA "$discordName\Code Cache") -Days $Days
-        Add-Target -Targets $Targets -Label "$discordName GPU cache" -Path (Join-Path $env:APPDATA "$discordName\GPUCache") -Days $Days
-    }
-
-    Add-Target -Targets $Targets -Label "Slack cache" -Path (Join-Path $env:APPDATA "Slack\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Slack code cache" -Path (Join-Path $env:APPDATA "Slack\Code Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Slack GPU cache" -Path (Join-Path $env:APPDATA "Slack\GPUCache") -Days $Days
-    Add-Target -Targets $Targets -Label "Telegram Desktop cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Telegram Desktop media cache" -Path (Join-Path $env:APPDATA "Telegram Desktop\tdata\user_data\media_cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Zoom webview cache" -Path (Join-Path $env:APPDATA "Zoom\data\WebviewCache") -Days $Days
-    Add-Target -Targets $Targets -Label "Microsoft Teams cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Microsoft Teams code cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\Code Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Microsoft Teams GPU cache" -Path (Join-Path $env:APPDATA "Microsoft\Teams\GPUCache") -Days $Days
-    Add-WildcardTargets -Targets $Targets -Label "new Teams package cache" -Pattern (Join-Path $env:LOCALAPPDATA "Packages\MSTeams_*\LocalCache\Microsoft\MSTeams\Cache") -Days $Days
+    Add-DiscordCacheTargets -Targets $Targets -Days $Days
+    Add-SlackCacheTargets -Targets $Targets -Days $Days
+    Add-TelegramCacheTargets -Targets $Targets -Days $Days
+    Add-ZoomCacheTargets -Targets $Targets -Days $Days
+    Add-TeamsCacheTargets -Targets $Targets -Days $Days
 }
 
 function Add-SystemCacheTargets {
@@ -1438,15 +1646,16 @@ if ($Analyze) {
 }
 
 if ($AggressiveSafe) {
-    $CleanBrowserCaches = $true
-    $CleanAppCaches = $true
-    $CleanSpotifyCache = $true
-    $CleanExtraPaths = $true
-    $CleanGameCaches = $true
+    Write-Log "Aggressive safe profile keeps program cache switches from config; it does not force every app cache on." -Detail
 }
 
 if ($CleanAppCaches) {
     $CleanSpotifyCache = $true
+    $CleanDiscordCache = $true
+    $CleanTelegramCache = $true
+    $CleanSlackCache = $true
+    $CleanTeamsCache = $true
+    $CleanZoomCache = $true
 }
 
 if ([string]::IsNullOrWhiteSpace($ExtraPathsFile)) {
@@ -1456,6 +1665,13 @@ if ([string]::IsNullOrWhiteSpace($ExtraPathsFile)) {
 if ([string]::IsNullOrWhiteSpace($GuardDrive)) {
     $GuardDrive = $env:SystemDrive
 }
+
+$driveThreshold = Get-PerDriveThreshold `
+    -Drive $GuardDrive `
+    -FallbackFreeGB $MinFreeGB `
+    -FallbackFreePercent $MinFreePercent
+$MinFreeGB = $driveThreshold.MinFreeGB
+$MinFreePercent = $driveThreshold.MinFreePercent
 
 $modeName = if ($Analyze) {
     "analyze"
@@ -1478,7 +1694,7 @@ if (-not [string]::IsNullOrWhiteSpace($script:ConfigSource)) {
 
 Write-Panel -Title "WinSweep" -Lines $introLines
 
-Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Config=$script:ConfigSource Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin"
+Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Config=$script:ConfigSource Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard GuardDrive=$GuardDrive MinFreeGB=$MinFreeGB MinFreePercent=$MinFreePercent AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache DiscordCache=$CleanDiscordCache TelegramCache=$CleanTelegramCache SlackCache=$CleanSlackCache TeamsCache=$CleanTeamsCache ZoomCache=$CleanZoomCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin ExcludedPaths=$($script:ExcludedPaths.Count)"
 Write-Log "Log file: $LogFile" -Detail
 if (-not [string]::IsNullOrWhiteSpace($script:ConfigLoadWarning)) {
     Write-Log $script:ConfigLoadWarning "WARN"
@@ -1487,6 +1703,10 @@ if (-not [string]::IsNullOrWhiteSpace($script:ConfigLoadWarning)) {
 if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
     Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")
     exit 0
+}
+
+if ($SmartGuard) {
+    Show-PressureNotification -Snapshot $script:LastGuardSnapshot -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent
 }
 
 $startSnapshot = Get-DriveSnapshot -Drive $GuardDrive
@@ -1519,6 +1739,23 @@ if ($CleanSpotifyCache -and -not $CleanAppCaches) {
 
 if ($CleanAppCaches) {
     Add-AppCacheTargets -Targets $targets -Days $CacheOlderThanDays
+}
+else {
+    if ($CleanDiscordCache) {
+        Add-DiscordCacheTargets -Targets $targets -Days $CacheOlderThanDays
+    }
+    if ($CleanTelegramCache) {
+        Add-TelegramCacheTargets -Targets $targets -Days $CacheOlderThanDays
+    }
+    if ($CleanSlackCache) {
+        Add-SlackCacheTargets -Targets $targets -Days $CacheOlderThanDays
+    }
+    if ($CleanTeamsCache) {
+        Add-TeamsCacheTargets -Targets $targets -Days $CacheOlderThanDays
+    }
+    if ($CleanZoomCache) {
+        Add-ZoomCacheTargets -Targets $targets -Days $CacheOlderThanDays
+    }
 }
 
 if ($CleanDeveloperCaches) {

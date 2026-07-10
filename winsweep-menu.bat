@@ -36,9 +36,8 @@ echo 8. Open latest HTML report
 echo 9. Open logs
 echo A. Install scheduled tasks (admin)
 echo B. Edit config
-echo R. Build release zip
-echo T. Save GitHub token
-echo P. Publish GitHub release
+echo C. Cache switches, disk thresholds, and exclusions
+echo M. System maintenance check (no deletion)
 echo Q. Quit
 echo.
 set "PICK="
@@ -101,18 +100,13 @@ if /i "%PICK%"=="b" (
     goto menu
 )
 
-if /i "%PICK%"=="r" (
-    call "%~dp0build-release.bat"
+if /i "%PICK%"=="c" (
+    call "%~dp0manage-winsweep-settings.bat"
     goto menu
 )
 
-if /i "%PICK%"=="t" (
-    call "%~dp0save-github-token.bat"
-    goto menu
-)
-
-if /i "%PICK%"=="p" (
-    call "%~dp0publish-release.bat"
+if /i "%PICK%"=="m" (
+    call "%~dp0system-maintenance-check.bat"
     goto menu
 )
 

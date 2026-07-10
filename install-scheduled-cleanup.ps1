@@ -10,6 +10,11 @@ param(
     [switch]$BrowserCaches,
     [switch]$AppCaches,
     [switch]$SpotifyCache,
+    [switch]$DiscordCache,
+    [switch]$TelegramCache,
+    [switch]$SlackCache,
+    [switch]$TeamsCache,
+    [switch]$ZoomCache,
     [switch]$Registry,
     [switch]$ExtraPaths,
     [switch]$DeveloperCaches,
@@ -125,11 +130,27 @@ if (-not [string]::IsNullOrWhiteSpace($ConfigPath) -and (Test-Path -LiteralPath 
     Set-SwitchFromConfig -Name "BrowserCaches" -Value (Get-ConfigProperty -Object $features -Name "browserCaches")
     Set-SwitchFromConfig -Name "AppCaches" -Value (Get-ConfigProperty -Object $features -Name "appCaches")
     Set-SwitchFromConfig -Name "SpotifyCache" -Value (Get-ConfigProperty -Object $features -Name "spotifyCache")
+    Set-SwitchFromConfig -Name "DiscordCache" -Value (Get-ConfigProperty -Object $features -Name "discordCache")
+    Set-SwitchFromConfig -Name "TelegramCache" -Value (Get-ConfigProperty -Object $features -Name "telegramCache")
+    Set-SwitchFromConfig -Name "SlackCache" -Value (Get-ConfigProperty -Object $features -Name "slackCache")
+    Set-SwitchFromConfig -Name "TeamsCache" -Value (Get-ConfigProperty -Object $features -Name "teamsCache")
+    Set-SwitchFromConfig -Name "ZoomCache" -Value (Get-ConfigProperty -Object $features -Name "zoomCache")
     Set-SwitchFromConfig -Name "Registry" -Value (Get-ConfigProperty -Object $features -Name "registry")
     Set-SwitchFromConfig -Name "ExtraPaths" -Value (Get-ConfigProperty -Object $features -Name "extraPaths")
     Set-SwitchFromConfig -Name "DeveloperCaches" -Value (Get-ConfigProperty -Object $features -Name "developerCaches")
     Set-SwitchFromConfig -Name "GameCaches" -Value (Get-ConfigProperty -Object $features -Name "gameCaches")
     Set-SwitchFromConfig -Name "RecycleBin" -Value (Get-ConfigProperty -Object $features -Name "clearRecycleBin")
+
+    $paths = Get-ConfigProperty -Object $config -Name "paths"
+    $guardDrive = [string](Get-ConfigProperty -Object $paths -Name "guardDrive")
+    $perDrive = Get-ConfigProperty -Object $thresholds -Name "perDrive"
+    if ($null -ne $perDrive -and -not [string]::IsNullOrWhiteSpace($guardDrive)) {
+        $driveThreshold = Get-ConfigProperty -Object $perDrive -Name $guardDrive.TrimEnd("\\").ToUpperInvariant()
+        if ($null -ne $driveThreshold) {
+            Set-IntFromConfig -Name "LowFreeGB" -Value (Get-ConfigProperty -Object $driveThreshold -Name "minFreeGB")
+            Set-IntFromConfig -Name "LowFreePercent" -Value (Get-ConfigProperty -Object $driveThreshold -Name "minFreePercent")
+        }
+    }
 
     Write-Host "Using config: $ConfigPath"
 }
@@ -217,6 +238,21 @@ if ($AppCaches) {
 }
 elseif ($SpotifyCache) {
     $optionalArgs += " -CleanSpotifyCache"
+}
+if ($DiscordCache) {
+    $optionalArgs += " -CleanDiscordCache"
+}
+if ($TelegramCache) {
+    $optionalArgs += " -CleanTelegramCache"
+}
+if ($SlackCache) {
+    $optionalArgs += " -CleanSlackCache"
+}
+if ($TeamsCache) {
+    $optionalArgs += " -CleanTeamsCache"
+}
+if ($ZoomCache) {
+    $optionalArgs += " -CleanZoomCache"
 }
 if ($Registry) {
     $optionalArgs += " -CleanRegistry"

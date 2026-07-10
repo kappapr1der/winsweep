@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Version = "",
     [string]$Repository = "kappapr1der/winsweep",
@@ -279,14 +279,14 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
 @(
     "WinSweep $tag",
     "",
-    "Download $assetName, extract it, then run setup-desktop-folder.bat or winsweep-menu.bat.",
+    "Скачайте $assetName, распакуйте архив и запустите setup-desktop-folder.bat или winsweep-menu.bat.",
     "",
-    "Included:",
-    "- Windows cleanup profiles and pressure guard",
-    "- HTML reports",
-    "- disk analyzer lite",
-    "- cleanup history",
-    "- configurable winsweep-config.json"
+    "Что нового:",
+    "- отдельные переключатели кэшей Discord, Telegram, Spotify и других программ",
+    "- исключения для папок, которые нельзя чистить",
+    "- отдельные пороги свободного места для каждого диска",
+    "- история изменения свободного места и анализ крупных папок",
+    "- безопасная диагностика гибернации, точек восстановления и компонентов Windows"
 ) | Set-Content -LiteralPath $notesPath -Encoding UTF8
 
 Write-Host ""
