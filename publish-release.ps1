@@ -7,6 +7,8 @@ param(
     [switch]$Prerelease,
     [switch]$Draft,
     [switch]$SkipTagPush,
+    [ValidateRange(10, 300)]
+    [int]$RequestTimeoutSeconds = 30,
     [switch]$DryRun
 )
 
@@ -167,6 +169,7 @@ function Invoke-GitHubJson {
         Uri         = $Uri
         Headers     = New-GitHubHeaders -AuthToken $AuthToken
         ErrorAction = "Stop"
+        TimeoutSec  = $RequestTimeoutSeconds
     }
 
     if ($null -ne $Body) {
@@ -201,6 +204,7 @@ function Invoke-GitHubUpload {
             -Headers (New-GitHubHeaders -AuthToken $AuthToken) `
             -ContentType "application/zip" `
             -InFile $FilePath `
+            -TimeoutSec $RequestTimeoutSeconds `
             -ErrorAction Stop
     }
     catch {
