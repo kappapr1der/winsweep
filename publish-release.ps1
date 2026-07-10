@@ -14,6 +14,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Net.Http
 
 $root = Split-Path -Parent $PSCommandPath
 $cleanupScript = Join-Path $root "cleanup-windows.ps1"
