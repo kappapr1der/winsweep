@@ -69,8 +69,8 @@ jobs:
       - name: Build release zip
         shell: pwsh
         run: |
-          .\build-release.ps1 -Version $env:WINSWEEP_VERSION
-          $zip = "dist\WinSweep-v$env:WINSWEEP_VERSION.zip"
+          .\build-release.ps1 -Version $env:WINSWEEP_VERSION -Portable
+          $zip = "dist\WinSweep-Portable-v$env:WINSWEEP_VERSION.zip"
           if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
             throw "Release zip was not created: $zip"
           }
@@ -79,16 +79,16 @@ jobs:
         shell: pwsh
         run: |
           @(
-            "WinSweep $env:WINSWEEP_TAG",
+            "WinSweep $env:WINSWEEP_TAG - Portable",
             "",
-            "Download ``WinSweep-v$env:WINSWEEP_VERSION.zip``, extract it, then run ``setup-desktop-folder.bat`` or ``winsweep-menu.bat``.",
+            "Скачайте ``WinSweep-Portable-v$env:WINSWEEP_VERSION.zip``, распакуйте архив и запустите ``WinSweep.exe``.",
             "",
-            "Included:",
-            "- Windows cleanup profiles and pressure guard",
-            "- HTML reports",
-            "- disk analyzer lite",
-            "- cleanup history",
-            "- configurable ``winsweep-config.json``"
+            "Что нового:",
+            "- настоящая portable-сборка: движок и настройки создаются рядом с EXE",
+            "- папку можно перенести или скопировать целиком, не теряя настройки",
+            "- единый Control Center для очистки, диагностики, истории и настроек",
+            "- переключатели кэшей Discord, Telegram, Spotify и других программ",
+            "- пользовательский ZIP без батников и ручного запуска PowerShell"
           ) | Set-Content -LiteralPath release-notes.md -Encoding UTF8
 
       - name: Publish GitHub release
@@ -96,7 +96,7 @@ jobs:
         with:
           tag_name: ${{ env.WINSWEEP_TAG }}
           target_commitish: ${{ github.sha }}
-          name: WinSweep ${{ env.WINSWEEP_TAG }}
+          name: WinSweep ${{ env.WINSWEEP_TAG }} - Portable
           body_path: release-notes.md
-          files: dist/WinSweep-v${{ env.WINSWEEP_VERSION }}.zip
+          files: dist/WinSweep-Portable-v${{ env.WINSWEEP_VERSION }}.zip
           prerelease: ${{ env.WINSWEEP_PRERELEASE }}

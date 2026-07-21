@@ -1,74 +1,69 @@
-# Publishing Releases
+# Публикация релизов
 
-WinSweep supports two release paths.
+У WinSweep два варианта публикации: через GitHub Actions или напрямую с этого
+ПК. Основной формат для пользователей - portable-архив: внутри только
+`WinSweep.exe`, `README.md` и `CONFIG.md`.
 
-## Automatic GitHub Actions release
+## Portable-версия
 
-Push a version tag:
+Собрать архив локально:
 
-```bash
-git tag v0.4.3
-git push origin v0.4.3
+```powershell
+.\build-release.ps1 -Version 1.0.1 -Portable
 ```
 
-GitHub Actions will build `dist\WinSweep-v0.4.3.zip` and attach it to a new
-GitHub Release.
+Готовый файл появится в `dist\WinSweep-Portable-v1.0.1.zip`. После первого
+запуска `WinSweep.exe` создаст скрытую папку `WinSweepData` рядом с собой.
+В ней находятся настройки и внутренний движок, поэтому всю папку можно
+переносить целиком.
 
-This requires GitHub Actions to be enabled for the repository and the account to
-be allowed to run Actions. If the run annotation says `The job was not started
-because your account is locked due to a billing issue`, fix the billing lock on
-GitHub first or use the local release path below.
+Обычная сборка остаётся доступна для совместимости:
 
-## Local release publish without Actions
+```powershell
+.\build-release.ps1 -Version 1.0.1
+```
 
-Use this when Actions are unavailable, or when you want to publish from your PC
-without adding billing details to GitHub:
+## Автоматический релиз GitHub Actions
+
+GitHub Actions собирает релиз после пуша тега:
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Это работает, только пока для аккаунта разрешён запуск Actions. При ошибке
+про billing lock используй локальную публикацию ниже: она не расходует минуты
+GitHub Actions.
+
+## Локальная публикация без Actions
+
+Один раз сохрани fine-grained token с доступом `Contents: Read and write` к
+`kappapr1der/winsweep`:
 
 ```powershell
 .\save-github-token.ps1
-.\publish-release.ps1 -Version 0.4.3
 ```
 
-Requirements:
-
-- a GitHub personal access token
-- repository access to `kappapr1der/winsweep`
-- repository permission `Contents: Read and write`
-
-The token is saved to `%APPDATA%\WinSweep\github-token.txt` encrypted for the
-current Windows user with DPAPI. It is not stored in this repository.
-
-Recommended token setup:
-
-1. Open GitHub `Settings`.
-2. Open `Developer settings`.
-3. Open `Personal access tokens`.
-4. Create a fine-grained token.
-5. Set repository access to `kappapr1der/winsweep`.
-6. Set `Contents` to `Read and write`.
-
-What it does:
-
-- builds `dist\WinSweep-v0.4.3.zip`;
-- creates or reuses the GitHub tag `v0.4.3`;
-- creates or updates the GitHub Release asset.
-
-Useful options:
+Затем опубликуй portable-архив:
 
 ```powershell
-.\publish-release.ps1 -Version 0.4.3 -DryRun
-.\publish-release.ps1 -Version 0.4.3 -Repository kappapr1der/winsweep
-.\publish-release.ps1 -Version 0.4.3 -Prerelease
-.\publish-release.ps1 -Version 0.4.3 -Draft
-.\publish-release.ps1 -Version 0.4.3 -TargetCommitish main
+.\publish-release.ps1 -Version 1.0.1 -Portable
+```
+
+Сценарий собирает ZIP, создаёт или использует тег `v1.0.1` и прикрепляет архив
+к GitHub Release. Токен сохраняется зашифрованным через DPAPI в
+`%APPDATA%\WinSweep\github-token.txt`, а в репозиторий не попадает.
+
+Полезные варианты:
+
+```powershell
+.\publish-release.ps1 -Version 1.0.1 -Portable -DryRun
+.\publish-release.ps1 -Version 1.0.1 -Portable -Prerelease
+.\publish-release.ps1 -Version 1.0.1 -Portable -UpdateExisting -ReplaceAsset
 .\save-github-token.ps1 -Clear
 ```
 
-Token lookup order:
-
-1. `-Token`
-2. `WINSWEEP_GITHUB_TOKEN`
-3. `GITHUB_TOKEN`
-4. `GH_TOKEN`
-5. saved DPAPI token from `save-github-token.ps1`
-6. hidden prompt
+Токен ищется в таком порядке: параметр `-Token`, переменные окружения
+`WINSWEEP_GITHUB_TOKEN` / `GITHUB_TOKEN` / `GH_TOKEN`, сохранённый DPAPI-токен,
+затем скрытый запрос в консоли.

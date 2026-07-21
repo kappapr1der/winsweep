@@ -9,6 +9,7 @@ param(
     [switch]$UpdateExisting,
     [switch]$ReplaceAsset,
     [switch]$SkipTagPush,
+    [switch]$Portable,
     [ValidateRange(10, 300)]
     [int]$RequestTimeoutSeconds = 30,
     [switch]$DryRun
@@ -263,7 +264,9 @@ if ([string]::IsNullOrWhiteSpace($Repository) -or $Repository -notmatch '^[^/\s]
 }
 
 $tag = "v$Version"
-$zipPath = Join-Path $root "dist\WinSweep-v$Version.zip"
+$assetPrefix = if ($Portable) { "WinSweep-Portable" } else { "WinSweep" }
+$releaseTitle = if ($Portable) { "WinSweep $tag - Portable" } else { "WinSweep $tag" }
+$zipPath = Join-Path $root ("dist\{0}-v{1}.zip" -f $assetPrefix, $Version)
 $notesPath = Join-Path $root "release-notes.md"
 $assetName = Split-Path -Leaf $zipPath
 
@@ -271,18 +274,13 @@ if ($SkipTagPush) {
     Write-Host "Note: -SkipTagPush is no longer needed. The GitHub Releases API creates or reuses the tag."
 }
 
-& $buildScript -Version $Version
+& $buildScript -Version $Version -Portable:$Portable
 
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     throw "Release zip was not created: $zipPath"
 }
 
-@(
-    "WinSweep $tag",
-    "",
-    "Скачайте $assetName, распакуйте архив и запустите WinSweep.exe.",
-    "",
-    "Что нового:",
+$highlights = @(
     "- отдельные переключатели кэшей Discord, Telegram, Spotify и других программ",
     "- исключения для папок, которые нельзя чистить",
     "- отдельные пороги свободного места для каждого диска",
@@ -291,13 +289,27 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     "- открытие HTML-отчётов в Google Chrome с безопасным fallback",
     "- пересоздание задач Планировщика с прямым путём к системному PowerShell",
     "- восстановление ярлыков Windows PowerShell из главного меню",
-    "- единый WPF Control Center для очистки, диагностики, истории и настроек"
-    "- отдельная диагностика кодировки UTF-8 для логов и HTML-отчётов"
-    "- явная UTF-8 передача вывода PowerShell в GUI без кракозябр"
-    "- системный раздел с анализом компонентного хранилища и обратимым управлением гибернацией"
+    "- единый WPF Control Center для очистки, диагностики, истории и настроек",
+    "- отдельная диагностика кодировки UTF-8 для логов и HTML-отчётов",
+    "- явная UTF-8 передача вывода PowerShell в GUI без кракозябр",
+    "- системный раздел с анализом компонентного хранилища и обратимым управлением гибернацией",
     "- единый WinSweep.exe с внутренним движком и запуском GUI одной кнопкой"
-    "- пользовательский ZIP-релиз без батников и ручного запуска PowerShell"
-) | Set-Content -LiteralPath $notesPath -Encoding UTF8
+)
+
+if ($Portable) {
+    $highlights = @(
+        "- настоящая portable-сборка: движок и настройки создаются в скрытой папке WinSweepData рядом с WinSweep.exe",
+        "- папку можно перенести или скопировать целиком, не теряя настройки"
+    ) + $highlights
+}
+
+@(
+    $releaseTitle,
+    "",
+    "Скачайте $assetName, распакуйте архив и запустите WinSweep.exe.",
+    "",
+    "Что нового:"
+) + $highlights | Set-Content -LiteralPath $notesPath -Encoding UTF8
 
 Write-Host ""
 Write-Host "Release asset:"
@@ -306,7 +318,7 @@ Write-Host ""
 
 if ($DryRun) {
     Write-Host "Dry run only. No GitHub release was created."
-    Write-Host "Would publish $tag to https://github.com/$Repository/releases using target $TargetCommitish."
+    Write-Host "Would publish $assetName to https://github.com/$Repository/releases using target $TargetCommitish."
     exit 0
 }
 
@@ -326,7 +338,7 @@ if ($release) {
             -Uri "$apiRoot/releases/$($release.id)" `
             -AuthToken $releaseToken `
             -Body @{
-                name       = "WinSweep $tag"
+                name       = $releaseTitle
                 body       = $notes
                 draft      = [bool]$Draft
                 prerelease = [bool]$Prerelease
@@ -345,7 +357,7 @@ else {
         -Body @{
             tag_name               = $tag
             target_commitish       = $TargetCommitish
-            name                   = "WinSweep $tag"
+            name                   = $releaseTitle
             body                   = $notes
             draft                  = [bool]$Draft
             prerelease             = [bool]$Prerelease

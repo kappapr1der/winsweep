@@ -1,6 +1,7 @@
 ﻿[CmdletBinding()]
 param(
-    [string]$Version = ""
+    [string]$Version = "",
+    [switch]$Portable
 )
 
 Set-StrictMode -Version Latest
@@ -20,7 +21,8 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 
 $dist = Join-Path $root "dist"
 $stageRoot = Join-Path $root ".release-stage"
-$stage = Join-Path $stageRoot "WinSweep-v$Version"
+$stageName = if ($Portable) { "WinSweep-Portable-v$Version" } else { "WinSweep-v$Version" }
+$stage = Join-Path $stageRoot $stageName
 
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 if (Test-Path -LiteralPath $stageRoot) {
@@ -95,19 +97,22 @@ foreach ($file in $files) {
 }
 
 $exeBuilder = Join-Path $root "build-winsweep-exe.ps1"
-$exePath = Join-Path $stage "WinSweep.exe"
-$distExePath = Join-Path $dist "WinSweep.exe"
-& $exeBuilder -PayloadRoot $stage -OutputPath $exePath
+$exeName = if ($Portable) { "WinSweep-Portable.exe" } else { "WinSweep.exe" }
+$exePath = Join-Path $stage $exeName
+$distExePath = Join-Path $dist $exeName
+& $exeBuilder -PayloadRoot $stage -OutputPath $exePath -Portable:$Portable
 Copy-Item -LiteralPath $exePath -Destination $distExePath -Force
 
-$zipPath = Join-Path $dist "WinSweep-v$Version.zip"
+$zipName = if ($Portable) { "WinSweep-Portable-v$Version.zip" } else { "WinSweep-v$Version.zip" }
+$zipPath = Join-Path $dist $zipName
 if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 
 $publicStage = Join-Path $stageRoot "public"
 New-Item -ItemType Directory -Path $publicStage -Force | Out-Null
-foreach ($publicFile in @("WinSweep.exe", "README.md", "CONFIG.md")) {
+Copy-Item -LiteralPath $exePath -Destination (Join-Path $publicStage "WinSweep.exe") -Force
+foreach ($publicFile in @("README.md", "CONFIG.md")) {
     Copy-Item -LiteralPath (Join-Path $stage $publicFile) -Destination (Join-Path $publicStage $publicFile) -Force
 }
 

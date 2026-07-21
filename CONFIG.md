@@ -1,6 +1,7 @@
 # Настройки WinSweep
 
-В режиме EXE WinSweep читает `winsweep-config.json` из
+В portable-версии WinSweep читает `winsweep-config.json` из скрытой папки
+`WinSweepData` рядом с EXE. В обычной EXE-сборке этот путь остаётся
 `%LOCALAPPDATA%\WinSweep\Engine`. Параметры, переданные внутреннему движку,
 важнее значений из файла.
 

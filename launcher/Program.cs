@@ -14,10 +14,22 @@ internal static class Program
     {
         try
         {
+#if PORTABLE
+            var engineRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WinSweepData");
+#else
             var engineRoot = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "WinSweep",
                 "Engine");
+#endif
+            var testMode = false;
+            foreach (var argument in Environment.GetCommandLineArgs())
+            {
+                if (string.Equals(argument, "--test", StringComparison.OrdinalIgnoreCase))
+                {
+                    testMode = true;
+                }
+            }
 
             Directory.CreateDirectory(engineRoot);
             ExtractPayload(engineRoot);
@@ -37,13 +49,16 @@ internal static class Program
             var startInfo = new ProcessStartInfo
             {
                 FileName = powerShell,
-                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + QuoteArgument(uiScript),
+                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + QuoteArgument(uiScript) + (testMode ? " -Test" : string.Empty),
                 WorkingDirectory = engineRoot,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
             };
             startInfo.EnvironmentVariables["WINSWEEP_LAUNCHED_FROM_EXE"] = "1";
+#if PORTABLE
+            startInfo.EnvironmentVariables["WINSWEEP_PORTABLE"] = "1";
+#endif
 
             using (var process = Process.Start(startInfo))
             {

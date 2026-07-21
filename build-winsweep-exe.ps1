@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PayloadRoot,
     [Parameter(Mandatory = $true)]
-    [string]$OutputPath
+    [string]$OutputPath,
+    [switch]$Portable
 )
 
 Set-StrictMode -Version Latest
@@ -54,12 +55,22 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
     $false)
 
 try {
-    & $compiler /nologo /target:winexe /optimize+ /out:$builtExe `
-        /reference:System.Windows.Forms.dll `
-        /reference:System.IO.Compression.dll `
-        /reference:System.IO.Compression.FileSystem.dll `
-        "/resource:$payloadZip,WinSweepPayload.zip" `
-        $program
+    $compilerArguments = @(
+        "/nologo",
+        "/target:winexe",
+        "/optimize+",
+        "/out:$builtExe",
+        "/reference:System.Windows.Forms.dll",
+        "/reference:System.IO.Compression.dll",
+        "/reference:System.IO.Compression.FileSystem.dll",
+        "/resource:$payloadZip,WinSweepPayload.zip"
+    )
+    if ($Portable) {
+        $compilerArguments += "/define:PORTABLE"
+    }
+    $compilerArguments += $program
+
+    & $compiler @compilerArguments
     if ($LASTEXITCODE -ne 0) {
         throw "C# compilation failed with exit code $LASTEXITCODE."
     }
