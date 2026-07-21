@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$GuardStart = "00:15",
     [int]$GuardEveryHours = 3,
@@ -25,6 +25,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$encodingHelper = Join-Path $PSScriptRoot "winsweep-encoding.ps1"
+if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
+    . $encodingHelper
+}
 
 $script:CliParameters = @{}
 foreach ($key in $PSBoundParameters.Keys) {

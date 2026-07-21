@@ -39,6 +39,10 @@ winsweep-menu.bat
 Старое `winsweep-menu.bat` и отдельные `.bat`-команды остаются доступными для
 совместимости и автоматизации.
 
+Во вкладке `Система` доступны безопасная диагностика хранилища компонентов,
+глубокое обслуживание через DISM, обратимое управление гибернацией и проверка
+кодировки логов. Глубокие действия запускаются с подтверждением UAC.
+
 ## Что есть в меню
 
 `winsweep-menu.bat` - основной способ работы с WinSweep.
@@ -209,10 +213,6 @@ open-latest-report.bat
 запусти `install-scheduled-cleanup.bat` ещё раз из Desktop-папки. WinSweep создаст
 задачи заново с прямым путём к `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`.
 
-Если в Планировщике осталась старая задача со ссылкой на `Windows PowerShell 5.1.lnk`,
-запусти `install-scheduled-cleanup.bat` ещё раз из Desktop-папки. WinSweep создаст
-задачи заново с прямым путём к `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`.
-
 Если сломан сам ярлык PowerShell в меню Пуск, запусти `repair-powershell-shortcut.bat`.
 Он восстановит обычный ярлык и добавит отдельный вариант с повышением прав.
 
@@ -258,6 +258,19 @@ Windows командой:
 ```powershell
 .\system-maintenance-check.ps1 -AnalyzeComponentStore
 ```
+
+В GUI для этого есть вкладка `Система`. Кнопка `Отключить гибернацию` удаляет
+`hiberfil.sys` и может вернуть несколько гигабайт, но одновременно отключает
+гибернацию и Fast Startup. Кнопка `Включить гибернацию` выполняет обратное
+действие.
+
+Для проверки файлов журналов:
+
+```bat
+check-log-encoding.bat
+```
+
+Проверка читает `.log`, `.html` и `.jsonl` как UTF-8 и ничего не изменяет.
 
 ## Безопасность
 

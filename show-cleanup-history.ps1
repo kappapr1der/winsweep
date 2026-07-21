@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [int]$Top = 10,
     [string]$LogDir = ""
@@ -6,6 +6,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
+
+$encodingHelper = Join-Path $PSScriptRoot "winsweep-encoding.ps1"
+if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
+    . $encodingHelper
+}
 
 function Resolve-LogDirs {
     param([string]$Preferred)
@@ -68,7 +73,7 @@ if ($logs.Count -eq 0) {
 }
 
 $rows = foreach ($log in $logs) {
-    $lines = @(Get-Content -LiteralPath $log.FullName -ErrorAction SilentlyContinue)
+    $lines = @([IO.File]::ReadAllLines($log.FullName, [Text.UTF8Encoding]::new($false)))
     $start = @($lines | Where-Object { $_ -match "Windows cleanup started" } | Select-Object -First 1)
     $finish = @($lines | Where-Object { $_ -match "Windows cleanup finished|Analyze finished|Preview finished" } | Select-Object -Last 1)
 

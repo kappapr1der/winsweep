@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$FolderName = "WinSweep",
     [string]$DestinationRoot = "",
@@ -65,6 +65,10 @@ $files = @(
     "winsweep-menu.bat",
     "winsweep-ui.ps1",
     "winsweep-ui.bat",
+    "winsweep-encoding.ps1",
+    "system-tweaks.ps1",
+    "check-log-encoding.ps1",
+    "check-log-encoding.bat",
     "winsweep-config.json",
     "scan-results.bat",
     "cleanup-now.bat",

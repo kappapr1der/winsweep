@@ -8,11 +8,16 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$encodingHelper = Join-Path $PSScriptRoot "winsweep-encoding.ps1"
+if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
+    . $encodingHelper
+}
+
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "0.7.0"
+$script:WinSweepVersion = "0.8.0"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -130,6 +135,23 @@ $xaml = @'
                     </StackPanel>
                 </Grid>
             </TabItem>
+            <TabItem Header="Система">
+                <StackPanel Margin="18">
+                    <TextBlock Text="Системное обслуживание" FontSize="20" FontWeight="SemiBold" Foreground="#172B32"/>
+                    <TextBlock Text="Обратимые действия и диагностика. Системные изменения запускаются с подтверждением UAC." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,18"/>
+                    <WrapPanel>
+                        <Button x:Name="SystemStatusButton" Content="Состояние системы" Style="{StaticResource SecondaryButton}"/>
+                        <Button x:Name="AnalyzeComponentStoreButton" Content="Анализ хранилища компонентов" Style="{StaticResource SecondaryButton}"/>
+                        <Button x:Name="DeepMaintenanceButton" Content="Глубокое обслуживание"/>
+                        <Button x:Name="DisableHibernationButton" Content="Отключить гибернацию" Style="{StaticResource SecondaryButton}"/>
+                        <Button x:Name="EnableHibernationButton" Content="Включить гибернацию" Style="{StaticResource SecondaryButton}"/>
+                        <Button x:Name="LogEncodingButton" Content="Проверить кодировку логов" Style="{StaticResource SecondaryButton}"/>
+                    </WrapPanel>
+                    <Border Background="#FFF9ED" BorderBrush="#E4C46A" BorderThickness="1" Padding="14" Margin="0,8,0,0">
+                        <TextBlock x:Name="SystemSafetyText" TextWrapping="Wrap" Foreground="#604A16"/>
+                    </Border>
+                </StackPanel>
+            </TabItem>
             <TabItem Header="Планировщик">
                 <StackPanel Margin="18">
                     <TextBlock Text="Автоматическая уборка" FontSize="20" FontWeight="SemiBold" Foreground="#172B32"/>
@@ -137,7 +159,6 @@ $xaml = @'
                     <WrapPanel>
                         <Button x:Name="InstallScheduleButton" Content="Переустановить задачи"/>
                         <Button x:Name="RepairShortcutButton" Content="Починить ярлыки PowerShell" Style="{StaticResource SecondaryButton}"/>
-                        <Button x:Name="SystemCheckButton" Content="Проверка системы" Style="{StaticResource SecondaryButton}"/>
                     </WrapPanel>
                     <TextBlock Text="Pressure Guard запускает безопасную очистку только при достижении порогов свободного места. Глубокая еженедельная задача остаётся отдельной." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,14,0,0"/>
                 </StackPanel>
@@ -188,6 +209,7 @@ $drivePanel = Get-Control "DrivePanel"
 $cachePanel = Get-Control "CachePanel"
 $overviewText = Get-Control "OverviewText"
 $scheduleText = Get-Control "ScheduleText"
+$systemSafetyText = Get-Control "SystemSafetyText"
 $logBox = Get-Control "LogBox"
 $activityProgress = Get-Control "ActivityProgress"
 
@@ -314,6 +336,22 @@ function Refresh-Summary {
     $scheduleText.Text = "Pressure Guard: каждые $([int](Get-ConfigValue -Object $schedule -Name 'guardEveryHours' -Fallback 3)) ч. с $([string](Get-ConfigValue -Object $schedule -Name 'guardStart' -Fallback '00:15')). Deep Weekly: $([string](Get-ConfigValue -Object $schedule -Name 'deepDay' -Fallback 'Sunday')) в $([string](Get-ConfigValue -Object $schedule -Name 'deepWeekly' -Fallback '03:20'))."
 }
 
+function Refresh-SystemSummary {
+    $drive = if ([string]::IsNullOrWhiteSpace($env:SystemDrive)) { 'C:' } else { $env:SystemDrive.TrimEnd('\') }
+    $hiberFile = Join-Path "$drive\" 'hiberfil.sys'
+    $hiberSize = [int64]0
+    if (Test-Path -LiteralPath $hiberFile -PathType Leaf) {
+        $hiberSize = [int64](Get-Item -LiteralPath $hiberFile).Length
+    }
+    $hiberText = if ($hiberSize -gt 0) { (Format-Bytes $hiberSize) } else { 'не найден' }
+    $systemSafetyText.Text = "Файл гибернации: $hiberText. Отключение освобождает место, но выключает гибернацию и Fast Startup; включение полностью обратимо. Анализ компонентного хранилища ничего не меняет."
+}
+
+function ConvertTo-PowerShellLiteral {
+    param([string]$Value)
+    return "'" + ([string]$Value).Replace("'", "''") + "'"
+}
+
 function ConvertTo-ProcessArguments {
     param([string[]]$Arguments)
     return (($Arguments | ForEach-Object {
@@ -338,7 +376,14 @@ function Start-WinSweepScript {
         Add-Log "Файл не найден: $target"
         return
     }
-    $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File',$target) + $ScriptArguments
+    $commandParts = @(
+        '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)'
+        '$global:OutputEncoding = [Console]::OutputEncoding'
+        ('& ' + (ConvertTo-PowerShellLiteral $target) + ' ' + (($ScriptArguments | ForEach-Object { ConvertTo-PowerShellLiteral ([string]$_) }) -join ' '))
+        'exit $LASTEXITCODE'
+    )
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join '; ')))
+    $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encodedCommand)
     if ($Elevated) {
         Start-Process -FilePath $script:PowerShellPath -ArgumentList (ConvertTo-ProcessArguments $args) -Verb RunAs | Out-Null
         Add-Log "Запущено с правами администратора: $FileName"
@@ -353,6 +398,8 @@ function Start-WinSweepScript {
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
     $process.EnableRaisingEvents = $true
@@ -400,10 +447,11 @@ Read-Config
 Refresh-Drives
 Refresh-CacheControls
 Refresh-Summary
+Refresh-SystemSummary
 Add-Log "Control Center v$script:WinSweepVersion готов."
 
 $controls = @{
-    RefreshButton = { Refresh-Drives; Refresh-Summary; Add-Log "Данные обновлены." }
+    RefreshButton = { Refresh-Drives; Refresh-Summary; Refresh-SystemSummary; Add-Log "Данные обновлены." }
     OpenFolderButton = { Open-ExternalPath -Path $PSScriptRoot }
     AnalyzeButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Analyze','-Profile','Emergency','-OpenReport','-ConfigPath',$script:ConfigPath) }
     SafeCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-OpenReport','-ConfigPath',$script:ConfigPath) }
@@ -415,7 +463,12 @@ $controls = @{
     OpenConfigButton = { Start-Process -FilePath 'notepad.exe' -ArgumentList ('"{0}"' -f $script:ConfigPath) }
     InstallScheduleButton = { Start-WinSweepScript -FileName 'install-scheduled-cleanup.ps1' -ScriptArguments @('-ConfigPath',$script:ConfigPath) -Elevated }
     RepairShortcutButton = { Start-WinSweepScript -FileName 'repair-powershell-shortcut.ps1' }
-    SystemCheckButton = { Start-WinSweepScript -FileName 'system-maintenance-check.ps1' }
+    SystemStatusButton = { Start-WinSweepScript -FileName 'system-maintenance-check.ps1' }
+    AnalyzeComponentStoreButton = { Start-WinSweepScript -FileName 'system-maintenance-check.ps1' -ScriptArguments @('-AnalyzeComponentStore') -Elevated }
+    DeepMaintenanceButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Deep','-OpenReport','-ConfigPath',$script:ConfigPath) -Elevated }
+    DisableHibernationButton = { Start-WinSweepScript -FileName 'system-tweaks.ps1' -ScriptArguments @('-DisableHibernation') -Elevated; Refresh-SystemSummary }
+    EnableHibernationButton = { Start-WinSweepScript -FileName 'system-tweaks.ps1' -ScriptArguments @('-EnableHibernation') -Elevated; Refresh-SystemSummary }
+    LogEncodingButton = { Start-WinSweepScript -FileName 'check-log-encoding.ps1' }
     SpaceReportButton = { Start-WinSweepScript -FileName 'space-hog-report.ps1' -ScriptArguments @('-Top','12','-OpenReport') }
     OpenLatestReportButton = { Start-WinSweepScript -FileName 'open-latest-report.ps1' }
     ShowHistoryButton = { Start-WinSweepScript -FileName 'show-cleanup-history.ps1' }

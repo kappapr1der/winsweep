@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$Version = ""
 )
@@ -39,6 +39,10 @@ $files = @(
     "winsweep-menu.bat",
     "winsweep-ui.ps1",
     "winsweep-ui.bat",
+    "winsweep-encoding.ps1",
+    "system-tweaks.ps1",
+    "check-log-encoding.ps1",
+    "check-log-encoding.bat",
     "scan-results.bat",
     "cleanup-safe-now.bat",
     "cleanup-gaming-now.bat",

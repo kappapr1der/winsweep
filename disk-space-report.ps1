@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [switch]$AllFixedDrives,
     [string[]]$Drives = @(),
@@ -10,6 +10,11 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
+
+$encodingHelper = Join-Path $PSScriptRoot "winsweep-encoding.ps1"
+if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
+    . $encodingHelper
+}
 
 function Format-ByteSize {
     param([int64]$Bytes)

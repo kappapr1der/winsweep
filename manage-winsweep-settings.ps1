@@ -8,6 +8,11 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$encodingHelper = Join-Path $PSScriptRoot "winsweep-encoding.ps1"
+if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
+    . $encodingHelper
+}
+
 function Resolve-ConfigPath {
     param([string]$Path)
 

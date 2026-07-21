@@ -2,6 +2,7 @@
 setlocal
 set "SCRIPT=%~dp0winsweep-ui.ps1"
 set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+chcp 65001 >nul
 
 if not exist "%SCRIPT%" (
     echo winsweep-ui.ps1 was not found next to this file.
