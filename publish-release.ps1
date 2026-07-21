@@ -291,7 +291,9 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     "- пересоздание задач Планировщика с прямым путём к системному PowerShell",
     "- восстановление ярлыков Windows PowerShell из главного меню",
     "- единый WPF Control Center для очистки, диагностики, истории и настроек"
-    "- единый WPF Control Center для очистки, диагностики, истории и настроек"
+    "- отдельная диагностика кодировки UTF-8 для логов и HTML-отчётов"
+    "- явная UTF-8 передача вывода PowerShell в GUI без кракозябр"
+    "- системный раздел с анализом компонентного хранилища и обратимым управлением гибернацией"
 ) | Set-Content -LiteralPath $notesPath -Encoding UTF8
 
 Write-Host ""
