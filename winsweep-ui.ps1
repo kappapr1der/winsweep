@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "0.8.0"
+$script:WinSweepVersion = "1.0.0"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -79,7 +79,7 @@ $xaml = @'
             </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock Text="WinSweep" FontSize="30" FontWeight="SemiBold" Foreground="#172B32"/>
-                <TextBlock Text="Control Center · очистка, место и настройки в одном окне" FontSize="14" Foreground="#5A6B72" Margin="0,4,0,0"/>
+                <TextBlock Text="Control Center · одна кнопка для безопасной очистки, места и настроек" FontSize="14" Foreground="#5A6B72" Margin="0,4,0,0"/>
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button x:Name="RefreshButton" Content="Обновить" Style="{StaticResource SecondaryButton}"/>
@@ -101,6 +101,7 @@ $xaml = @'
                     </Grid.RowDefinitions>
                     <TextBlock Text="Быстрые действия" FontSize="20" FontWeight="SemiBold" Foreground="#172B32" Margin="0,0,0,14"/>
                     <WrapPanel Grid.Row="1">
+                        <Button x:Name="RecommendedCleanupButton" Content="Очистить безопасно" FontWeight="SemiBold" Padding="20,11"/>
                         <Button x:Name="AnalyzeButton" Content="Анализ очистки"/>
                         <Button x:Name="SafeCleanupButton" Content="Безопасная очистка"/>
                         <Button x:Name="SmartCleanupButton" Content="Умная очистка"/>
@@ -453,6 +454,7 @@ Add-Log "Control Center v$script:WinSweepVersion готов."
 $controls = @{
     RefreshButton = { Refresh-Drives; Refresh-Summary; Refresh-SystemSummary; Add-Log "Данные обновлены." }
     OpenFolderButton = { Open-ExternalPath -Path $PSScriptRoot }
+    RecommendedCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-SmartGuard','-OpenReport','-ConfigPath',$script:ConfigPath) }
     AnalyzeButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Analyze','-Profile','Emergency','-OpenReport','-ConfigPath',$script:ConfigPath) }
     SafeCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-OpenReport','-ConfigPath',$script:ConfigPath) }
     SmartCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-SmartGuard','-AggressiveSafe','-CleanDeveloperCaches','-CleanRegistry','-ConfigPath',$script:ConfigPath) }

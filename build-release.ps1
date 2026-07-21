@@ -83,7 +83,8 @@ $files = @(
     "extra-cache-paths.txt",
     "README.md",
     "CONFIG.md",
-    "RELEASES.md"
+    "RELEASES.md",
+    "build-winsweep-exe.ps1"
 )
 
 foreach ($file in $files) {
@@ -93,12 +94,24 @@ foreach ($file in $files) {
     }
 }
 
+$exeBuilder = Join-Path $root "build-winsweep-exe.ps1"
+$exePath = Join-Path $stage "WinSweep.exe"
+$distExePath = Join-Path $dist "WinSweep.exe"
+& $exeBuilder -PayloadRoot $stage -OutputPath $exePath
+Copy-Item -LiteralPath $exePath -Destination $distExePath -Force
+
 $zipPath = Join-Path $dist "WinSweep-v$Version.zip"
 if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipPath -Force
+$publicStage = Join-Path $stageRoot "public"
+New-Item -ItemType Directory -Path $publicStage -Force | Out-Null
+foreach ($publicFile in @("WinSweep.exe", "README.md", "CONFIG.md")) {
+    Copy-Item -LiteralPath (Join-Path $stage $publicFile) -Destination (Join-Path $publicStage $publicFile) -Force
+}
+
+Compress-Archive -Path (Join-Path $publicStage "*") -DestinationPath $zipPath -Force
 Remove-Item -LiteralPath $stageRoot -Recurse -Force
 
 Write-Host "Release zip created:"

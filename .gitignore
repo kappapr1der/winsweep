@@ -6,4 +6,6 @@ RegistryBackups/
 CodexWindowsCleanup/
 dist/
 .release-stage/
+.launcher-build/
+launcher/WinSweepPayload.zip
 release-notes.md

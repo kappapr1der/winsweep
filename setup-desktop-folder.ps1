@@ -59,6 +59,15 @@ if ([string]::IsNullOrWhiteSpace($desktop)) {
 $targetRoot = Join-Path $desktop $FolderName
 New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
 
+$exeCandidates = @(
+    (Join-Path $sourceRoot "WinSweep.exe"),
+    (Join-Path $sourceRoot "dist\WinSweep.exe")
+)
+$exeSource = $exeCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+if ($exeSource) {
+    Copy-Item -LiteralPath $exeSource -Destination (Join-Path $targetRoot "WinSweep.exe") -Force
+}
+
 $files = @(
     "cleanup-windows.ps1",
     "install-scheduled-cleanup.ps1",

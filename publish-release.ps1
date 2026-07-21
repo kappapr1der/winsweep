@@ -201,15 +201,12 @@ function Invoke-GitHubJson {
         if ($AllowNotFound -and $response.StatusCode -eq 404) {
             return $null
         }
-
         if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 300) {
             throw "GitHub API $Method $Uri failed ($($response.StatusCode)) $($response.BodyText)"
         }
-
         if ([string]::IsNullOrWhiteSpace($response.BodyText)) {
             return $null
         }
-
         return $response.BodyText | ConvertFrom-Json
     }
     finally {
@@ -225,6 +222,10 @@ function Invoke-GitHubUpload {
         [string]$AuthToken,
         [string]$FilePath
     )
+
+    if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
+        throw "Release asset was not found: $FilePath"
+    }
 
     $response = Invoke-GitHubCurl `
         -Method "POST" `
@@ -279,7 +280,7 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
 @(
     "WinSweep $tag",
     "",
-    "Скачайте $assetName, распакуйте архив и запустите setup-desktop-folder.bat или winsweep-menu.bat.",
+    "Скачайте $assetName, распакуйте архив и запустите WinSweep.exe.",
     "",
     "Что нового:",
     "- отдельные переключатели кэшей Discord, Telegram, Spotify и других программ",
@@ -294,6 +295,8 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     "- отдельная диагностика кодировки UTF-8 для логов и HTML-отчётов"
     "- явная UTF-8 передача вывода PowerShell в GUI без кракозябр"
     "- системный раздел с анализом компонентного хранилища и обратимым управлением гибернацией"
+    "- единый WinSweep.exe с внутренним движком и запуском GUI одной кнопкой"
+    "- пользовательский ZIP-релиз без батников и ручного запуска PowerShell"
 ) | Set-Content -LiteralPath $notesPath -Encoding UTF8
 
 Write-Host ""
@@ -310,12 +313,14 @@ if ($DryRun) {
 $releaseToken = Get-ReleaseToken -ExplicitToken $Token
 $apiRoot = "https://api.github.com/repos/$Repository"
 $releaseByTagUri = "$apiRoot/releases/tags/$tag"
+Write-Host "Checking GitHub release: $tag"
 $release = Invoke-GitHubJson -Method GET -Uri $releaseByTagUri -AuthToken $releaseToken -AllowNotFound
 $notes = Get-Content -LiteralPath $notesPath -Raw -Encoding UTF8
 
 if ($release) {
     Write-Host "Release already exists: $tag"
     if ($UpdateExisting) {
+        Write-Host "Updating release metadata..."
         $release = Invoke-GitHubJson `
             -Method PATCH `
             -Uri "$apiRoot/releases/$($release.id)" `
@@ -348,6 +353,7 @@ else {
         }
 }
 
+Write-Host "Checking release assets..."
 $assets = Invoke-GitHubJson -Method GET -Uri "$apiRoot/releases/$($release.id)/assets?per_page=100" -AuthToken $releaseToken
 $assetAlreadyExists = $false
 foreach ($asset in @($assets)) {
@@ -365,6 +371,7 @@ foreach ($asset in @($assets)) {
 
 $uploadedAsset = $null
 if (-not $assetAlreadyExists -or $ReplaceAsset) {
+    Write-Host "Uploading release asset: $assetName"
     $encodedAssetName = [Uri]::EscapeDataString($assetName)
     $uploadUri = "https://uploads.github.com/repos/$Repository/releases/$($release.id)/assets?name=$encodedAssetName"
     $uploadedAsset = Invoke-GitHubUpload -Uri $uploadUri -AuthToken $releaseToken -FilePath $zipPath
