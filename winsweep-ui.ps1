@@ -17,10 +17,11 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.0.1"
+$script:WinSweepVersion = "1.0.2"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
+$script:ActiveAction = ""
 $script:CacheCheckboxes = @{}
 $script:Config = $null
 
@@ -113,6 +114,7 @@ $xaml = @'
                         <StackPanel>
                             <TextBlock Text="Состояние" FontSize="16" FontWeight="SemiBold" Foreground="#172B32"/>
                             <TextBlock x:Name="OverviewText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,0"/>
+                            <TextBlock x:Name="ActivitySummaryText" Text="Готово к запуску действия." TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,12,0,0"/>
                             <TextBlock Text="Очистка запускается существующими PowerShell-сценариями WinSweep, поэтому GUI не меняет их безопасные правила." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,16,0,0"/>
                         </StackPanel>
                     </Border>
@@ -184,9 +186,10 @@ $xaml = @'
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
-                <DockPanel>
-                    <TextBlock Text="Журнал запуска" Foreground="White" FontSize="15" FontWeight="SemiBold"/>
+                <DockPanel LastChildFill="False">
+                    <TextBlock Text="Журнал запуска" DockPanel.Dock="Left" Foreground="White" FontSize="15" FontWeight="SemiBold"/>
                     <ProgressBar x:Name="ActivityProgress" DockPanel.Dock="Right" Width="150" Height="10" IsIndeterminate="False" Margin="20,4,0,0"/>
+                    <TextBlock x:Name="ActivityStatusText" DockPanel.Dock="Right" Text="Готово" Foreground="#D9F1ED" Margin="0,0,8,0" VerticalAlignment="Center"/>
                 </DockPanel>
                 <TextBox Grid.Row="1" x:Name="LogBox" Background="#0E1D22" Foreground="#D9F1ED" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8" Margin="0,10,0,0"/>
             </Grid>
@@ -209,10 +212,12 @@ function Get-Control {
 $drivePanel = Get-Control "DrivePanel"
 $cachePanel = Get-Control "CachePanel"
 $overviewText = Get-Control "OverviewText"
+$activitySummaryText = Get-Control "ActivitySummaryText"
 $scheduleText = Get-Control "ScheduleText"
 $systemSafetyText = Get-Control "SystemSafetyText"
 $logBox = Get-Control "LogBox"
 $activityProgress = Get-Control "ActivityProgress"
+$activityStatusText = Get-Control "ActivityStatusText"
 
 function Add-Log {
     param([string]$Text)
@@ -361,6 +366,89 @@ function ConvertTo-ProcessArguments {
     }) -join ' ')
 }
 
+function Get-ActionTitle {
+    param([string]$FileName)
+
+    switch ($FileName) {
+        'cleanup-windows.ps1' { return 'Очистка' }
+        'space-hog-report.ps1' { return 'Анализ места' }
+        'system-maintenance-check.ps1' { return 'Проверка системы' }
+        'system-tweaks.ps1' { return 'Системное действие' }
+        'install-scheduled-cleanup.ps1' { return 'Настройка Планировщика' }
+        'check-log-encoding.ps1' { return 'Проверка кодировки' }
+        default { return $FileName }
+    }
+}
+
+function Set-ActionState {
+    param(
+        [bool]$Running,
+        [string]$Message
+    )
+
+    $activityProgress.IsIndeterminate = $Running
+    if (-not $Running) {
+        $activityProgress.Value = 0
+    }
+    $activityStatusText.Text = $Message
+    $activitySummaryText.Text = $Message
+    $activitySummaryText.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString(
+        $(if ($Running) { '#C47A22' } else { '#147D78' }))
+
+    foreach ($name in @($script:ActionControlNames)) {
+        $control = $window.FindName($name)
+        if ($null -ne $control) {
+            $control.IsEnabled = -not $Running
+        }
+    }
+}
+
+function Complete-WinSweepAction {
+    param(
+        [int]$ExitCode,
+        [string]$ActionTitle,
+        [switch]$Elevated
+    )
+
+    if ($null -eq $script:ActiveProcess) {
+        return
+    }
+
+    $script:ActiveProcess = $null
+    $script:ActiveAction = ''
+    $result = if ($ExitCode -eq 0) { "$ActionTitle завершено." } else { "$ActionTitle завершено с кодом $ExitCode. Проверь журнал ниже." }
+    Set-ActionState -Running $false -Message $result
+    Add-Log $result
+    try {
+        Refresh-Drives
+        Refresh-SystemSummary
+    }
+    catch {
+        Add-Log ("Не удалось обновить состояние дисков: " + $_.Exception.Message)
+    }
+}
+
+function Watch-WinSweepProcess {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [string]$ActionTitle,
+        [switch]$Elevated
+    )
+
+    $Process.EnableRaisingEvents = $true
+    $Process.add_Exited({
+        param($sender, $eventArgs)
+        $exitCode = $sender.ExitCode
+        $window.Dispatcher.BeginInvoke([Action]{
+            Complete-WinSweepAction -ExitCode $exitCode -ActionTitle $ActionTitle -Elevated:$Elevated
+        }.GetNewClosure()) | Out-Null
+    }.GetNewClosure())
+
+    if ($Process.HasExited) {
+        Complete-WinSweepAction -ExitCode $Process.ExitCode -ActionTitle $ActionTitle -Elevated:$Elevated
+    }
+}
+
 function Start-WinSweepScript {
     param(
         [string]$FileName,
@@ -372,6 +460,7 @@ function Start-WinSweepScript {
         Add-Log "Действие уже выполняется. Дождись завершения текущего запуска."
         return
     }
+    $actionTitle = Get-ActionTitle -FileName $FileName
     $target = Join-Path $PSScriptRoot $FileName
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
         Add-Log "Файл не найден: $target"
@@ -385,9 +474,20 @@ function Start-WinSweepScript {
     )
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join '; ')))
     $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encodedCommand)
+    Set-ActionState -Running $true -Message ("Выполняется: $actionTitle. Не закрывай WinSweep.")
     if ($Elevated) {
-        Start-Process -FilePath $script:PowerShellPath -ArgumentList (ConvertTo-ProcessArguments $args) -Verb RunAs | Out-Null
-        Add-Log "Запущено с правами администратора: $FileName"
+        try {
+            $process = Start-Process -FilePath $script:PowerShellPath -ArgumentList (ConvertTo-ProcessArguments $args) -Verb RunAs -PassThru -ErrorAction Stop
+            $script:ActiveProcess = $process
+            $script:ActiveAction = $actionTitle
+            Watch-WinSweepProcess -Process $process -ActionTitle $actionTitle -Elevated
+            Add-Log "Запущено с правами администратора: $FileName. Подтверди UAC, затем прогресс останется здесь."
+        }
+        catch {
+            $script:ActiveProcess = $null
+            Set-ActionState -Running $false -Message ("Не удалось запустить $actionTitle.")
+            Add-Log ("ОШИБКА запуска с правами администратора: " + $_.Exception.Message)
+        }
         return
     }
 
@@ -403,38 +503,36 @@ function Start-WinSweepScript {
     $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
-    $process.EnableRaisingEvents = $true
     $process.add_OutputDataReceived({
         param($sender, $eventArgs)
-        $line = $eventArgs.Data
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            $window.Dispatcher.BeginInvoke([Action]{ Add-Log $line }) | Out-Null
+        $outputLine = $eventArgs.Data
+        if (-not [string]::IsNullOrWhiteSpace($outputLine)) {
+            $window.Dispatcher.BeginInvoke([Action]{ Add-Log $outputLine }.GetNewClosure()) | Out-Null
         }
-    })
+    }.GetNewClosure())
     $process.add_ErrorDataReceived({
         param($sender, $eventArgs)
-        $line = $eventArgs.Data
-        if (-not [string]::IsNullOrWhiteSpace($line)) {
-            $window.Dispatcher.BeginInvoke([Action]{ Add-Log ("ОШИБКА: " + $line) }) | Out-Null
+        $errorLine = $eventArgs.Data
+        if (-not [string]::IsNullOrWhiteSpace($errorLine)) {
+            $window.Dispatcher.BeginInvoke([Action]{ Add-Log ("ОШИБКА: " + $errorLine) }.GetNewClosure()) | Out-Null
         }
-    })
-    $process.add_Exited({
-        $exitCode = $process.ExitCode
-        $window.Dispatcher.BeginInvoke([Action]{
-            $activityProgress.IsIndeterminate = $false
-            $activityProgress.Value = 0
-            Add-Log ("Завершено. Код: $exitCode")
-        }) | Out-Null
-    })
-    if (-not $process.Start()) {
-        Add-Log "Не удалось запустить: $FileName"
-        return
+    }.GetNewClosure())
+    try {
+        if (-not $process.Start()) {
+            throw "Процесс не был запущен."
+        }
+        $script:ActiveProcess = $process
+        $script:ActiveAction = $actionTitle
+        Watch-WinSweepProcess -Process $process -ActionTitle $actionTitle
+        Add-Log "Запуск: $actionTitle"
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
     }
-    $script:ActiveProcess = $process
-    $activityProgress.IsIndeterminate = $true
-    Add-Log "Запуск: $FileName"
-    $process.BeginOutputReadLine()
-    $process.BeginErrorReadLine()
+    catch {
+        $script:ActiveProcess = $null
+        Set-ActionState -Running $false -Message ("Не удалось запустить $actionTitle.")
+        Add-Log ("ОШИБКА запуска: " + $_.Exception.Message)
+    }
 }
 
 function Open-ExternalPath {
@@ -477,10 +575,28 @@ $controls = @{
     OpenLogsButton = { Open-ExternalPath -Path (Join-Path $env:ProgramData 'CodexWindowsCleanup\Logs') }
 }
 
+$script:ActionControlNames = @(
+    'RecommendedCleanupButton', 'AnalyzeButton', 'SafeCleanupButton', 'SmartCleanupButton',
+    'SpaceHogButton', 'OpenReportButton', 'HistoryButton', 'InstallScheduleButton',
+    'RepairShortcutButton', 'SystemStatusButton', 'AnalyzeComponentStoreButton',
+    'DeepMaintenanceButton', 'DisableHibernationButton', 'EnableHibernationButton',
+    'LogEncodingButton', 'SpaceReportButton', 'OpenLatestReportButton', 'ShowHistoryButton'
+)
+
 foreach ($entry in $controls.GetEnumerator()) {
     $control = Get-Control $entry.Key
     $action = $entry.Value
-    $control.Add_Click($action)
+    $control.Add_Click({
+        try {
+            & $action
+        }
+        catch {
+            $message = $_.Exception.Message
+            $script:ActiveProcess = $null
+            Set-ActionState -Running $false -Message 'Действие не запустилось. Подробности в журнале.'
+            Add-Log ("ОШИБКА интерфейса: " + $message)
+        }
+    }.GetNewClosure())
 }
 
 if ($Test) {
