@@ -17,11 +17,14 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.0.2"
+$script:WinSweepVersion = "1.0.3"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
 $script:ActiveAction = ""
+$script:ActiveRunLogPath = ""
+$script:ActiveRunLineCount = 0
+$script:ActionTimer = $null
 $script:CacheCheckboxes = @{}
 $script:Config = $null
 
@@ -199,6 +202,16 @@ $xaml = @'
 '@
 
 $window = [Windows.Markup.XamlReader]::Parse($xaml)
+$windowIconPath = Join-Path $PSScriptRoot 'winsweep-icon.png'
+if (Test-Path -LiteralPath $windowIconPath -PathType Leaf) {
+    $windowIcon = New-Object Windows.Media.Imaging.BitmapImage
+    $windowIcon.BeginInit()
+    $windowIcon.CacheOption = [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $windowIcon.UriSource = [Uri]::new($windowIconPath, [UriKind]::Absolute)
+    $windowIcon.EndInit()
+    $windowIcon.Freeze()
+    $window.Icon = $windowIcon
+}
 
 function Get-Control {
     param([string]$Name)
@@ -414,9 +427,15 @@ function Complete-WinSweepAction {
         return
     }
 
+    if ($null -ne $script:ActionTimer) {
+        $script:ActionTimer.Stop()
+    }
+    $script:ActionTimer = $null
     $script:ActiveProcess = $null
     $script:ActiveAction = ''
-    $result = if ($ExitCode -eq 0) { "$ActionTitle завершено." } else { "$ActionTitle завершено с кодом $ExitCode. Проверь журнал ниже." }
+    $script:ActiveRunLogPath = ''
+    $script:ActiveRunLineCount = 0
+    $result = if ($ExitCode -eq 0) { "Готово: $ActionTitle." } else { "$ActionTitle завершено с кодом $ExitCode. Проверь журнал ниже." }
     Set-ActionState -Running $false -Message $result
     Add-Log $result
     try {
@@ -428,25 +447,58 @@ function Complete-WinSweepAction {
     }
 }
 
-function Watch-WinSweepProcess {
+function New-WinSweepRunLogPath {
+    $runLogDirectory = Join-Path $PSScriptRoot 'WinSweepRuns'
+    New-Item -ItemType Directory -Path $runLogDirectory -Force | Out-Null
+    Get-ChildItem -LiteralPath $runLogDirectory -Filter 'run-*.log' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -Skip 24 |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    return Join-Path $runLogDirectory ("run-{0}-{1}.log" -f (Get-Date).ToString('yyyyMMdd-HHmmss'), [Guid]::NewGuid().ToString('N'))
+}
+
+function Add-WinSweepRunLogLines {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return
+    }
+
+    $lines = @(Get-Content -LiteralPath $Path -Encoding UTF8 -ErrorAction Stop)
+    for ($index = $script:ActiveRunLineCount; $index -lt $lines.Count; $index++) {
+        Add-Log ([string]$lines[$index])
+    }
+    $script:ActiveRunLineCount = $lines.Count
+}
+
+function Start-WinSweepProcessMonitor {
     param(
         [System.Diagnostics.Process]$Process,
         [string]$ActionTitle,
-        [switch]$Elevated
+        [switch]$Elevated,
+        [string]$RunLogPath = ''
     )
 
-    $Process.EnableRaisingEvents = $true
-    $Process.add_Exited({
-        param($sender, $eventArgs)
-        $exitCode = $sender.ExitCode
-        $window.Dispatcher.BeginInvoke([Action]{
-            Complete-WinSweepAction -ExitCode $exitCode -ActionTitle $ActionTitle -Elevated:$Elevated
-        }.GetNewClosure()) | Out-Null
+    $timer = New-Object System.Windows.Threading.DispatcherTimer
+    $timer.Interval = [TimeSpan]::FromMilliseconds(180)
+    $timer.Add_Tick({
+        try {
+            Add-WinSweepRunLogLines -Path $RunLogPath
+            if ($Process.HasExited) {
+                Add-WinSweepRunLogLines -Path $RunLogPath
+                Complete-WinSweepAction -ExitCode $Process.ExitCode -ActionTitle $ActionTitle -Elevated:$Elevated
+            }
+        }
+        catch {
+            Add-Log ("ОШИБКА мониторинга ${ActionTitle}: " + $_.Exception.Message)
+            if ($Process.HasExited) {
+                Complete-WinSweepAction -ExitCode $Process.ExitCode -ActionTitle $ActionTitle -Elevated:$Elevated
+            }
+        }
     }.GetNewClosure())
 
-    if ($Process.HasExited) {
-        Complete-WinSweepAction -ExitCode $Process.ExitCode -ActionTitle $ActionTitle -Elevated:$Elevated
-    }
+    $script:ActionTimer = $timer
+    $timer.Start()
 }
 
 function Start-WinSweepScript {
@@ -466,11 +518,20 @@ function Start-WinSweepScript {
         Add-Log "Файл не найден: $target"
         return
     }
+    try {
+        $runLogPath = New-WinSweepRunLogPath
+        $script:ActiveRunLogPath = $runLogPath
+    }
+    catch {
+        Set-ActionState -Running $false -Message ("Не удалось подготовить журнал для $actionTitle.")
+        Add-Log ("ОШИБКА подготовки журнала: " + $_.Exception.Message)
+        return
+    }
     $commandParts = @(
         '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)'
         '$global:OutputEncoding = [Console]::OutputEncoding'
-        ('& ' + (ConvertTo-PowerShellLiteral $target) + ' ' + (($ScriptArguments | ForEach-Object { ConvertTo-PowerShellLiteral ([string]$_) }) -join ' '))
-        'exit $LASTEXITCODE'
+        ('& ' + (ConvertTo-PowerShellLiteral $target) + ' ' + (($ScriptArguments | ForEach-Object { ConvertTo-PowerShellLiteral ([string]$_) }) -join ' ') + ' *>&1 | Out-File -LiteralPath ' + (ConvertTo-PowerShellLiteral $runLogPath) + ' -Encoding UTF8')
+        'exit 0'
     )
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join '; ')))
     $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encodedCommand)
@@ -480,7 +541,7 @@ function Start-WinSweepScript {
             $process = Start-Process -FilePath $script:PowerShellPath -ArgumentList (ConvertTo-ProcessArguments $args) -Verb RunAs -PassThru -ErrorAction Stop
             $script:ActiveProcess = $process
             $script:ActiveAction = $actionTitle
-            Watch-WinSweepProcess -Process $process -ActionTitle $actionTitle -Elevated
+            Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -Elevated -RunLogPath $runLogPath
             Add-Log "Запущено с правами администратора: $FileName. Подтверди UAC, затем прогресс останется здесь."
         }
         catch {
@@ -497,36 +558,16 @@ function Start-WinSweepScript {
     $info.WorkingDirectory = $PSScriptRoot
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
-    $info.RedirectStandardOutput = $true
-    $info.RedirectStandardError = $true
-    $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
-    $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $info
-    $process.add_OutputDataReceived({
-        param($sender, $eventArgs)
-        $outputLine = $eventArgs.Data
-        if (-not [string]::IsNullOrWhiteSpace($outputLine)) {
-            $window.Dispatcher.BeginInvoke([Action]{ Add-Log $outputLine }.GetNewClosure()) | Out-Null
-        }
-    }.GetNewClosure())
-    $process.add_ErrorDataReceived({
-        param($sender, $eventArgs)
-        $errorLine = $eventArgs.Data
-        if (-not [string]::IsNullOrWhiteSpace($errorLine)) {
-            $window.Dispatcher.BeginInvoke([Action]{ Add-Log ("ОШИБКА: " + $errorLine) }.GetNewClosure()) | Out-Null
-        }
-    }.GetNewClosure())
     try {
         if (-not $process.Start()) {
             throw "Процесс не был запущен."
         }
         $script:ActiveProcess = $process
         $script:ActiveAction = $actionTitle
-        Watch-WinSweepProcess -Process $process -ActionTitle $actionTitle
+        Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -RunLogPath $runLogPath
         Add-Log "Запуск: $actionTitle"
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
     }
     catch {
         $script:ActiveProcess = $null

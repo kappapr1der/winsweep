@@ -83,6 +83,7 @@ $files = @(
     "setup-desktop-folder.ps1",
     "setup-desktop-folder.bat",
     "extra-cache-paths.txt",
+    "winsweep-icon.png",
     "README.md",
     "CONFIG.md",
     "RELEASES.md",

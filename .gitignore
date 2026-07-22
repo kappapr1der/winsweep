@@ -9,3 +9,5 @@ dist/
 .launcher-build/
 launcher/WinSweepPayload.zip
 release-notes.md
+WinSweepRuns/
+launcher/assets/winsweep-icon-source.png

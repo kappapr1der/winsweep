@@ -14,6 +14,7 @@ $root = Split-Path -Parent $PSCommandPath
 $launcherRoot = Join-Path $root "launcher"
 $project = Join-Path $launcherRoot "WinSweepLauncher.csproj"
 $program = Join-Path $launcherRoot "Program.cs"
+$icon = Join-Path $launcherRoot "assets\winsweep.ico"
 $payloadRootFull = [IO.Path]::GetFullPath($PayloadRoot)
 $outputFull = [IO.Path]::GetFullPath($OutputPath)
 
@@ -22,6 +23,9 @@ if (-not (Test-Path -LiteralPath $project -PathType Leaf)) {
 }
 if (-not (Test-Path -LiteralPath $program -PathType Leaf)) {
     throw "Launcher source was not found: $program"
+}
+if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+    throw "Launcher icon was not found: $icon"
 }
 if (-not (Test-Path -LiteralPath $payloadRootFull -PathType Container)) {
     throw "Payload root was not found: $payloadRootFull"
@@ -63,6 +67,7 @@ try {
         "/reference:System.Windows.Forms.dll",
         "/reference:System.IO.Compression.dll",
         "/reference:System.IO.Compression.FileSystem.dll",
+        "/win32icon:$icon",
         "/resource:$payloadZip,WinSweepPayload.zip"
     )
     if ($Portable) {

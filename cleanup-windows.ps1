@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.0.2"
+$script:WinSweepVersion = "1.0.3"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
