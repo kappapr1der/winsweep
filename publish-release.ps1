@@ -122,55 +122,53 @@ function Invoke-GitHubCurl {
         [string]$ContentType = ""
     )
 
-    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) {
-        throw "curl.exe was not found. Windows includes it by default; install curl or use a supported Windows version."
-    }
-
-    $responsePath = [IO.Path]::GetTempFileName()
     try {
-        $curlArgs = @(
-            "--silent",
-            "--show-error",
-            "--request", $Method,
-            "--header", "Authorization: Bearer $AuthToken",
-            "--header", "Accept: application/vnd.github+json",
-            "--header", "X-GitHub-Api-Version: 2022-11-28",
-            "--header", "User-Agent: WinSweepReleasePublisher",
-            "--output", $responsePath,
-            "--write-out", "%{http_code}",
-            "--max-time", [string]$RequestTimeoutSeconds
-        )
-
+        $headers = @{
+            Authorization = "Bearer $AuthToken"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+            "User-Agent" = "WinSweepReleasePublisher"
+        }
+        $request = @{
+            Uri = $Uri
+            Method = $Method
+            Headers = $headers
+            TimeoutSec = $RequestTimeoutSeconds
+            UseBasicParsing = $true
+            ErrorAction = "Stop"
+        }
         if (-not [string]::IsNullOrWhiteSpace($ContentPath)) {
             if (-not (Test-Path -LiteralPath $ContentPath -PathType Leaf)) {
                 throw "GitHub request content file was not found: $ContentPath"
             }
-
-            $curlArgs += @(
-                "--header", "Content-Type: $ContentType",
-                "--data-binary", "@$ContentPath"
-            )
+            $request.InFile = $ContentPath
+            $request.ContentType = $ContentType
         }
 
-        $statusText = & curl.exe @curlArgs $Uri
-        $exitCode = $LASTEXITCODE
-        $responseText = [IO.File]::ReadAllText($responsePath, [Text.UTF8Encoding]::new($false))
-        if ($exitCode -ne 0) {
-            throw "GitHub API $Method $Uri failed: curl.exe exited with code $exitCode. $responseText"
-        }
-
-        [int]$statusCode = 0
-        if (-not [int]::TryParse($statusText.Trim(), [ref]$statusCode)) {
-            throw "GitHub API $Method $Uri did not return an HTTP status code."
-        }
+        $response = Invoke-WebRequest @request
 
         return [pscustomobject]@{
-            StatusCode = $statusCode
-            BodyText   = $responseText
+            StatusCode = [int]$response.StatusCode
+            BodyText   = [string]$response.Content
         }
     }
-    finally {
-        Remove-Item -LiteralPath $responsePath -Force -ErrorAction SilentlyContinue
+    catch [Net.WebException] {
+        $response = $_.Exception.Response
+        if ($null -eq $response) {
+            throw
+        }
+        $reader = New-Object IO.StreamReader($response.GetResponseStream(), [Text.UTF8Encoding]::new($false))
+        try {
+            $body = $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+            $response.Dispose()
+        }
+        return [pscustomobject]@{
+            StatusCode = [int]$response.StatusCode
+            BodyText   = $body
+        }
     }
 }
 
