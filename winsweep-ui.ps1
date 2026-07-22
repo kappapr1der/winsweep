@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.0.3"
+$script:WinSweepVersion = "1.0.4"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -36,7 +36,7 @@ $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WinSweep Control Center"
-        Width="1120" Height="760" MinWidth="900" MinHeight="640"
+        Width="1120" Height="840" MinWidth="900" MinHeight="700"
         WindowStartupLocation="CenterScreen"
         Background="#F4F7F8"
         FontFamily="Segoe UI">
@@ -73,7 +73,7 @@ $xaml = @'
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="160"/>
+            <RowDefinition Height="220"/>
         </Grid.RowDefinitions>
 
         <Grid Grid.Row="0" Margin="0,0,0,20">
@@ -193,8 +193,9 @@ $xaml = @'
                     <TextBlock Text="Журнал запуска" DockPanel.Dock="Left" Foreground="White" FontSize="15" FontWeight="SemiBold"/>
                     <ProgressBar x:Name="ActivityProgress" DockPanel.Dock="Right" Width="150" Height="10" IsIndeterminate="False" Margin="20,4,0,0"/>
                     <TextBlock x:Name="ActivityStatusText" DockPanel.Dock="Right" Text="Готово" Foreground="#D9F1ED" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <Button x:Name="OpenRunLogButton" Content="Открыть полный журнал" DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}" Padding="10,5" MinHeight="30" Margin="0,0,12,0" IsEnabled="False"/>
                 </DockPanel>
-                <TextBox Grid.Row="1" x:Name="LogBox" Background="#0E1D22" Foreground="#D9F1ED" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8" Margin="0,10,0,0"/>
+                <TextBox Grid.Row="1" x:Name="LogBox" Background="#0E1D22" Foreground="#D9F1ED" BorderThickness="0" IsReadOnly="True" TextWrapping="Wrap" FontFamily="Consolas" FontSize="12" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8" Margin="0,10,0,0"/>
             </Grid>
         </Border>
     </Grid>
@@ -231,6 +232,7 @@ $systemSafetyText = Get-Control "SystemSafetyText"
 $logBox = Get-Control "LogBox"
 $activityProgress = Get-Control "ActivityProgress"
 $activityStatusText = Get-Control "ActivityStatusText"
+$openRunLogButton = Get-Control "OpenRunLogButton"
 
 function Add-Log {
     param([string]$Text)
@@ -369,6 +371,16 @@ function Refresh-SystemSummary {
 function ConvertTo-PowerShellLiteral {
     param([string]$Value)
     return "'" + ([string]$Value).Replace("'", "''") + "'"
+}
+
+function ConvertTo-PowerShellInvocationArgument {
+    param([string]$Value)
+
+    # WinSweep passes only its own fixed parameter names unquoted; all values stay quoted.
+    if ($Value -match '^-[A-Za-z][A-Za-z0-9]*$') {
+        return $Value
+    }
+    return ConvertTo-PowerShellLiteral $Value
 }
 
 function ConvertTo-ProcessArguments {
@@ -521,19 +533,29 @@ function Start-WinSweepScript {
     try {
         $runLogPath = New-WinSweepRunLogPath
         $script:ActiveRunLogPath = $runLogPath
+        $script:ActiveRunLineCount = 0
+        $openRunLogButton.IsEnabled = $true
     }
     catch {
         Set-ActionState -Running $false -Message ("Не удалось подготовить журнал для $actionTitle.")
         Add-Log ("ОШИБКА подготовки журнала: " + $_.Exception.Message)
         return
     }
+    $invocationArguments = @($ScriptArguments | ForEach-Object { ConvertTo-PowerShellInvocationArgument ([string]$_) }) -join ' '
     $commandParts = @(
         '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)'
         '$global:OutputEncoding = [Console]::OutputEncoding'
-        ('& ' + (ConvertTo-PowerShellLiteral $target) + ' ' + (($ScriptArguments | ForEach-Object { ConvertTo-PowerShellLiteral ([string]$_) }) -join ' ') + ' *>&1 | Out-File -LiteralPath ' + (ConvertTo-PowerShellLiteral $runLogPath) + ' -Encoding UTF8')
-        'exit 0'
+        '$ErrorActionPreference = ''Stop'''
+        'try {'
+        ('    & ' + (ConvertTo-PowerShellLiteral $target) + ' ' + $invocationArguments + ' *>&1 | Out-File -LiteralPath ' + (ConvertTo-PowerShellLiteral $runLogPath) + ' -Encoding UTF8')
+        '    exit 0'
+        '}'
+        'catch {'
+        ('    ($_ | Out-String -Width 240).TrimEnd() | Out-File -LiteralPath ' + (ConvertTo-PowerShellLiteral $runLogPath) + ' -Append -Encoding UTF8')
+        '    exit 1'
+        '}'
     )
-    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join '; ')))
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join [Environment]::NewLine)))
     $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encodedCommand)
     Set-ActionState -Running $true -Message ("Выполняется: $actionTitle. Не закрывай WinSweep.")
     if ($Elevated) {
@@ -583,6 +605,22 @@ function Open-ExternalPath {
     }
 }
 
+function Open-RunLog {
+    $path = $script:ActiveRunLogPath
+    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $runLogDirectory = Join-Path $PSScriptRoot 'WinSweepRuns'
+        $latest = Get-ChildItem -LiteralPath $runLogDirectory -Filter 'run-*.log' -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        $path = if ($null -eq $latest) { '' } else { $latest.FullName }
+    }
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        Add-Log 'Журналов запусков пока нет.'
+        return
+    }
+    Start-Process -FilePath 'notepad.exe' -ArgumentList (ConvertTo-ProcessArguments @($path)) | Out-Null
+}
+
 Read-Config
 Refresh-Drives
 Refresh-CacheControls
@@ -614,6 +652,7 @@ $controls = @{
     OpenLatestReportButton = { Start-WinSweepScript -FileName 'open-latest-report.ps1' }
     ShowHistoryButton = { Start-WinSweepScript -FileName 'show-cleanup-history.ps1' }
     OpenLogsButton = { Open-ExternalPath -Path (Join-Path $env:ProgramData 'CodexWindowsCleanup\Logs') }
+    OpenRunLogButton = { Open-RunLog }
 }
 
 $script:ActionControlNames = @(
