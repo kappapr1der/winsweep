@@ -269,6 +269,20 @@ check-log-encoding.bat
 
 Проверка читает `.log`, `.html` и `.jsonl` как UTF-8 и ничего не изменяет.
 
+## Диагностика PowerShell
+
+Для редких сбоев PowerShell есть отдельная диагностическая настройка. Запусти
+от имени администратора:
+
+```powershell
+.\configure-powershell-dumps.ps1
+```
+
+Она включает небольшие минидампы только для `powershell.exe`, хранит их в
+`C:\ProgramData\WinSweep\Dumps` и оставляет максимум три последних файла.
+Обычный запуск и нормальное завершение PowerShell дамп не создают. Отключить
+настройку можно командой `.\configure-powershell-dumps.ps1 -Disable`.
+
 ## Безопасность
 
 WinSweep намеренно не удаляет:
