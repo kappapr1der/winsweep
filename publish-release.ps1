@@ -157,6 +157,7 @@ function Invoke-GitHubCurl {
         if ($null -eq $response) {
             throw
         }
+        $statusCode = [int]$response.StatusCode
         $reader = New-Object IO.StreamReader($response.GetResponseStream(), [Text.UTF8Encoding]::new($false))
         try {
             $body = $reader.ReadToEnd()
@@ -166,7 +167,7 @@ function Invoke-GitHubCurl {
             $response.Dispose()
         }
         return [pscustomobject]@{
-            StatusCode = [int]$response.StatusCode
+            StatusCode = $statusCode
             BodyText   = $body
         }
     }
