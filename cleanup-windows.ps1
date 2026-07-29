@@ -1886,7 +1886,9 @@ else {
 Show-CloseHints
 
 if ($script:FailedItems -gt 0) {
-    exit 1
+    # Locked caches are expected while applications are open. They are retried by
+    # the next guard run and must not make Task Scheduler report a failed cleanup.
+    Write-Log "Cleanup completed with $($script:FailedItems) skipped or locked item(s); they will be retried on the next run." "WARN"
 }
 
 exit 0

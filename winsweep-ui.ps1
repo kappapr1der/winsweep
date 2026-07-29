@@ -348,13 +348,42 @@ function Refresh-CacheControls {
     }
 }
 
+function Get-ScheduleHealth {
+    $taskPath = '\Codex Windows Cleanup\'
+    $expectedNames = @('Pressure Guard', 'Startup Guard', 'Deep Weekly')
+
+    try {
+        $tasks = @(Get-ScheduledTask -TaskPath $taskPath -ErrorAction Stop)
+    }
+    catch {
+        return 'Задания не установлены.'
+    }
+
+    foreach ($name in $expectedNames) {
+        $task = @($tasks | Where-Object { $_.TaskName -eq $name }) | Select-Object -First 1
+        if ($null -eq $task) {
+            return 'Не все задания установлены.'
+        }
+
+        foreach ($action in @($task.Actions)) {
+            $arguments = [string]$action.Arguments
+            $match = [regex]::Match($arguments, '-File\s+"([^"]+)"', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($match.Success -and -not (Test-Path -LiteralPath $match.Groups[1].Value -PathType Leaf)) {
+                return 'Задания указывают на отсутствующий движок. Нажми «Переустановить задачи».'
+            }
+        }
+    }
+
+    return 'Задания подключены к текущему движку.'
+}
+
 function Refresh-Summary {
     $features = $script:Config.features
     $enabled = @($script:CacheCheckboxes.GetEnumerator() | Where-Object { $_.Value.IsChecked } | ForEach-Object { $_.Value.Content })
     $profile = [string](Get-ConfigValue -Object $script:Config -Name 'defaultProfile' -Fallback 'Safe')
     $schedule = $script:Config.schedule
     $overviewText.Text = "Профиль по умолчанию: $profile. Включено переключателей: $($enabled.Count). Последняя проверка дисков обновляется кнопкой «Обновить»."
-    $scheduleText.Text = "Pressure Guard: каждые $([int](Get-ConfigValue -Object $schedule -Name 'guardEveryHours' -Fallback 3)) ч. с $([string](Get-ConfigValue -Object $schedule -Name 'guardStart' -Fallback '00:15')). Deep Weekly: $([string](Get-ConfigValue -Object $schedule -Name 'deepDay' -Fallback 'Sunday')) в $([string](Get-ConfigValue -Object $schedule -Name 'deepWeekly' -Fallback '03:20'))."
+    $scheduleText.Text = "Pressure Guard: каждые $([int](Get-ConfigValue -Object $schedule -Name 'guardEveryHours' -Fallback 3)) ч. с $([string](Get-ConfigValue -Object $schedule -Name 'guardStart' -Fallback '00:15')). Deep Weekly: $([string](Get-ConfigValue -Object $schedule -Name 'deepDay' -Fallback 'Sunday')) в $([string](Get-ConfigValue -Object $schedule -Name 'deepWeekly' -Fallback '03:20')). $(Get-ScheduleHealth)"
 }
 
 function Refresh-SystemSummary {
