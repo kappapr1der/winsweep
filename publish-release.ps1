@@ -184,20 +184,16 @@ function Invoke-GitHubCurl {
             & taskkill.exe /PID $process.Id /T /F | Out-Null
             throw "GitHub API $Method timed out after $RequestTimeoutSeconds seconds. The request process tree was stopped."
         }
-        # The timed overload does not populate ExitCode on Windows PowerShell.
+        # Finish stream redirection before reading the status file.
         $process.WaitForExit()
-        $exitCode = $process.ExitCode
 
         $statusText = [IO.File]::ReadAllText($statusPath, [Text.UTF8Encoding]::new($false)).Trim()
         $errorText = [IO.File]::ReadAllText($errorPath, [Text.UTF8Encoding]::new($false)).Trim()
         $responseText = [IO.File]::ReadAllText($responsePath, [Text.UTF8Encoding]::new($false))
-        if ($exitCode -ne 0) {
-            throw "GitHub API $Method $Uri failed: curl.exe exited with code $exitCode. $errorText $responseText"
-        }
 
         [int]$statusCode = 0
         if (-not [int]::TryParse($statusText, [ref]$statusCode)) {
-            throw "GitHub API $Method $Uri did not return an HTTP status code. $errorText"
+            throw "GitHub API $Method $Uri did not return an HTTP status code. $errorText $responseText"
         }
 
         return [pscustomobject]@{
