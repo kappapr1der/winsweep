@@ -21,8 +21,8 @@
   },
   "features": {
     "aggressiveSafe": false,
-    "browserCaches": false,
-    "appCaches": false,
+    "browserCaches": true,
+    "appCaches": true,
     "spotifyCache": true,
     "discordCache": true,
     "telegramCache": true,
@@ -31,8 +31,8 @@
     "zoomCache": false,
     "registry": true,
     "extraPaths": false,
-    "developerCaches": false,
-    "gameCaches": false,
+    "developerCaches": true,
+    "gameCaches": true,
     "clearRecycleBin": false,
     "notifyOnPressure": true
   },
