@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.0.5"
+$script:WinSweepVersion = "1.0.6"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -1381,6 +1381,11 @@ function Add-AppCacheTargets {
     Add-TelegramCacheTargets -Targets $Targets -Days $Days
     Add-ZoomCacheTargets -Targets $Targets -Days $Days
     Add-TeamsCacheTargets -Targets $Targets -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app code cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app GPU cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\GPUCache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app service worker cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Service Worker\CacheStorage") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app logs" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Logs") -Days $Days
 }
 
 function Add-SystemCacheTargets {
@@ -1432,6 +1437,7 @@ function Add-GameCacheTargets {
     Add-Target -Targets $Targets -Label "Battle.net cache" -Path (Join-Path $env:ProgramData "Battle.net\Cache") -Days $Days
     Add-Target -Targets $Targets -Label "Battle.net local cache" -Path (Join-Path $env:LOCALAPPDATA "Battle.net\Cache") -Days $Days
     Add-Target -Targets $Targets -Label "EA Desktop cache" -Path (Join-Path $env:LOCALAPPDATA "Electronic Arts\EA Desktop\cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Battlefield game data cache" -Path (Join-Path $env:LOCALAPPDATA "BattlefieldGameData.kin-release.Win32\cache") -Days $Days
     Add-Target -Targets $Targets -Label "Ubisoft Connect cache" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\cache") -Days $Days
     Add-Target -Targets $Targets -Label "Ubisoft Connect logs" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\logs") -Days $Days
     Add-Target -Targets $Targets -Label "Riot Client cache" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Data\Cache") -Days $Days
