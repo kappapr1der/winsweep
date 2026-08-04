@@ -368,7 +368,7 @@ $apiRoot = "https://api.github.com/repos/$Repository"
 $releaseByTagUri = "$apiRoot/releases/tags/$tag"
 Write-Host "Checking GitHub release: $tag"
 $release = Invoke-GitHubJson -Method GET -Uri $releaseByTagUri -AuthToken $releaseToken -AllowNotFound
-$notes = Get-Content -LiteralPath $notesPath -Raw -Encoding UTF8
+$notes = [IO.File]::ReadAllText($notesPath, [Text.UTF8Encoding]::new($false))
 
 if ($release) {
     Write-Host "Release already exists: $tag"
