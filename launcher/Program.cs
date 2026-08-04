@@ -20,10 +20,16 @@ internal static class Program
             Directory.CreateDirectory(engineRoot);
             ExtractPayload(engineRoot);
 
-            if (Environment.GetCommandLineArgs().Any(argument =>
+            var commandLine = Environment.GetCommandLineArgs();
+            if (commandLine.Any(argument =>
                     string.Equals(argument, "--test", StringComparison.OrdinalIgnoreCase)))
             {
                 return MainWindow.RunSmokeTest(engineRoot) ? 0 : 1;
+            }
+            if (commandLine.Any(argument =>
+                    string.Equals(argument, "--render-test", StringComparison.OrdinalIgnoreCase)))
+            {
+                return MainWindow.RunRenderSmokeTest(engineRoot) ? 0 : 1;
             }
 
             var app = new Application

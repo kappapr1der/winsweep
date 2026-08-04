@@ -15,6 +15,7 @@ launcher/assets/winsweep-icon-source.png
 .desktop-native-update-*.txt
 .dotnet-tmp/
 .native-ui-smoke*
+.native-render-smoke/
 .pagefile-*.json
 .pagefile-*.txt
 .system-space-audit.txt

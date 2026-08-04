@@ -15,7 +15,7 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.1.0";
+    private const string Version = "1.1.1";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
 
     private readonly string _engineRoot;
@@ -80,6 +80,55 @@ public partial class MainWindow : Window
         finally
         {
             application.Shutdown();
+        }
+    }
+
+    public static bool RunRenderSmokeTest(string engineRoot)
+    {
+        var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        var rendered = false;
+        var failed = false;
+        application.DispatcherUnhandledException += (_, eventArgs) =>
+        {
+            failed = true;
+            eventArgs.Handled = true;
+            application.Shutdown(1);
+        };
+
+        try
+        {
+            var window = new MainWindow(engineRoot)
+            {
+                Left = -10000,
+                Top = -10000,
+                Opacity = 0.01,
+                ShowInTaskbar = false
+            };
+            window.Loaded += (_, _) =>
+            {
+                rendered = true;
+                var closeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+                closeTimer.Tick += (_, _) =>
+                {
+                    closeTimer.Stop();
+                    window.Close();
+                    application.Shutdown();
+                };
+                closeTimer.Start();
+            };
+            application.Run(window);
+            return rendered && !failed;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (!failed)
+            {
+                application.Shutdown();
+            }
         }
     }
 

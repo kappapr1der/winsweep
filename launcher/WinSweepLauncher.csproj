@@ -12,7 +12,7 @@
     <PublishSingleFile>true</PublishSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <InvariantGlobalization>false</InvariantGlobalization>
     <ApplicationIcon>assets\winsweep.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition="'$(PortableBuild)' == 'true'">
