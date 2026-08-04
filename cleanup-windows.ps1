@@ -44,11 +44,12 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.0.6"
+$script:WinSweepVersion = "1.0.7"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
 $script:PotentialItems = 0
+$script:LockedItems = 0
 $script:FailedItems = 0
 $script:TargetResults = New-Object System.Collections.ArrayList
 $script:CloseHints = @{}
@@ -543,6 +544,46 @@ function Add-CloseHint {
 
 function Add-AdminRetryHint {
     $script:CloseHints["Run WinSweep as administrator if protected Windows or Store app caches are skipped."] = $true
+}
+
+function Test-IsLockedResourceException {
+    param([System.Exception]$Exception)
+
+    $current = $Exception
+    while ($null -ne $current) {
+        # ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION are normal for open apps.
+        if ($current.HResult -in @(-2147024864, -2147024863)) {
+            return $true
+        }
+
+        $message = [string]$current.Message
+        if ($message -match 'being used by another process|used by another process|used by another program|используется другим процессом|используется другой программой') {
+            return $true
+        }
+
+        $current = $current.InnerException
+    }
+
+    return $false
+}
+
+function Register-RemovalIssue {
+    param(
+        [string]$Label,
+        [string]$Path,
+        [string]$ItemType,
+        [System.Exception]$Exception
+    )
+
+    if (Test-IsLockedResourceException -Exception $Exception) {
+        $script:LockedItems += 1
+        Add-CloseHint -Label $Label
+        Write-Log "Skipped locked $ItemType for ${Label}: $Path. $($Exception.Message)" "WARN"
+        return
+    }
+
+    $script:FailedItems += 1
+    Write-Log "Cleanup error removing $ItemType for ${Label}: $Path. $($Exception.Message)" "ERROR"
 }
 
 function Get-ProfileName {
@@ -1158,10 +1199,8 @@ function Remove-OldContents {
             $script:DeletedItems += 1
         }
         catch {
-            $script:FailedItems += 1
             $targetFailures += 1
-            Add-CloseHint -Label $Label
-            Write-Log "Could not remove file: $($file.FullName). $($_.Exception.Message)" "WARN"
+            Register-RemovalIssue -Label $Label -Path $file.FullName -ItemType "file" -Exception $_.Exception
         }
     }
 
@@ -1202,10 +1241,8 @@ function Remove-OldContents {
             $script:DeletedItems += 1
         }
         catch {
-            $script:FailedItems += 1
             $targetFailures += 1
-            Add-CloseHint -Label $Label
-            Write-Log "Could not remove folder: $($directory.FullName). $($_.Exception.Message)" "WARN"
+            Register-RemovalIssue -Label $Label -Path $directory.FullName -ItemType "folder" -Exception $_.Exception
         }
     }
 
@@ -1542,8 +1579,7 @@ function Remove-RegistryTree {
         Write-Log "Removed registry key for ${Label}: $RegistryKey"
     }
     catch {
-        $script:FailedItems += 1
-        Write-Log "Could not remove registry key for ${Label}: $RegistryKey. $($_.Exception.Message)" "WARN"
+        Register-RemovalIssue -Label $Label -Path $RegistryKey -ItemType "registry key" -Exception $_.Exception
     }
 }
 
@@ -1859,12 +1895,13 @@ $diskSummaryLines = Get-DiskSummaryLines -Before $startSnapshot -After $endSnaps
 
 if ($DryRun) {
     $previewName = if ($Analyze) { "Analyze" } else { "Preview" }
-    Write-Log ("{0} finished. Would clean {1} item(s), about {2}, failures: {3}." -f $previewName, $script:PotentialItems, (Format-ByteSize $script:PotentialBytes), $script:FailedItems)
+    Write-Log ("{0} finished. Would clean {1} item(s), about {2}, blocked: {3}, errors: {4}." -f $previewName, $script:PotentialItems, (Format-ByteSize $script:PotentialBytes), $script:LockedItems, $script:FailedItems)
     Show-ScanResults -Mode "preview"
     $summaryLines = @(
         ("would clean: {0} item(s)" -f $script:PotentialItems),
         ("estimated reclaim: {0}" -f (Format-ByteSize $script:PotentialBytes)),
-        ("failures: {0}" -f $script:FailedItems)
+        ("blocked: {0}" -f $script:LockedItems),
+        ("errors: {0}" -f $script:FailedItems)
     )
     $summaryLines += $diskSummaryLines
     Write-HtmlReport -Mode $previewName -Before $startSnapshot -After $endSnapshot -SummaryLines $summaryLines
@@ -1874,12 +1911,13 @@ if ($DryRun) {
     Write-Panel -Title "Summary" -Lines $summaryLines
 }
 else {
-    Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, failures: {2}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:FailedItems)
+    Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, blocked: {2}, errors: {3}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:LockedItems, $script:FailedItems)
     Show-ScanResults -Mode "clean"
     $summaryLines = @(
         ("removed: {0} item(s)" -f $script:DeletedItems),
         ("reclaimed: {0}" -f (Format-ByteSize $script:DeletedBytes)),
-        ("failures: {0}" -f $script:FailedItems)
+        ("blocked: {0}" -f $script:LockedItems),
+        ("errors: {0}" -f $script:FailedItems)
     )
     $summaryLines += $diskSummaryLines
     Write-HtmlReport -Mode "clean" -Before $startSnapshot -After $endSnapshot -SummaryLines $summaryLines
@@ -1891,10 +1929,13 @@ else {
 
 Show-CloseHints
 
+if ($script:LockedItems -gt 0) {
+    Write-Log "Cleanup completed with $($script:LockedItems) skipped or locked item(s); they will be retried on the next run." "WARN"
+}
+
 if ($script:FailedItems -gt 0) {
-    # Locked caches are expected while applications are open. They are retried by
-    # the next guard run and must not make Task Scheduler report a failed cleanup.
-    Write-Log "Cleanup completed with $($script:FailedItems) skipped or locked item(s); they will be retried on the next run." "WARN"
+    Write-Log "Cleanup completed with $($script:FailedItems) actual error(s). Review the log before retrying." "ERROR"
+    exit 1
 }
 
 exit 0

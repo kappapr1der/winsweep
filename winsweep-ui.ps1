@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.0.6"
+$script:WinSweepVersion = "1.0.7"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -114,12 +114,44 @@ $xaml = @'
                         <Button x:Name="HistoryButton" Content="История" Style="{StaticResource SecondaryButton}"/>
                     </WrapPanel>
                     <Border Grid.Row="2" Background="White" BorderBrush="#D3DEE1" BorderThickness="1" Padding="16" Margin="0,8,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Состояние" FontSize="16" FontWeight="SemiBold" Foreground="#172B32"/>
-                            <TextBlock x:Name="OverviewText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,0"/>
-                            <TextBlock x:Name="ActivitySummaryText" Text="Готово к запуску действия." TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,12,0,0"/>
-                            <TextBlock Text="Очистка запускается существующими PowerShell-сценариями WinSweep, поэтому GUI не меняет их безопасные правила." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,16,0,0"/>
-                        </StackPanel>
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="Автозащита" FontSize="16" FontWeight="SemiBold" Foreground="#172B32"/>
+                            <TextBlock x:Name="ProtectionStateText" Grid.Row="1" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,7,0,0"/>
+                            <Grid Grid.Row="2" Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Margin="0,0,16,0">
+                                    <TextBlock Text="C: и порог" FontSize="12" Foreground="#5A6B72"/>
+                                    <TextBlock x:Name="ProtectionCapacityText" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#172B32" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Margin="8,0,16,0">
+                                    <TextBlock Text="Последний автозапуск" FontSize="12" Foreground="#5A6B72"/>
+                                    <TextBlock x:Name="ProtectionLastRunText" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#172B32" Margin="0,3,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2" Margin="8,0,0,0">
+                                    <TextBlock Text="Освобождено" FontSize="12" Foreground="#5A6B72"/>
+                                    <TextBlock x:Name="ProtectionSavingsText" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#172B32" Margin="0,3,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="OverviewText" Grid.Row="3" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,16,0,0"/>
+                            <TextBlock x:Name="LockedAppsText" Grid.Row="4" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,0"/>
+                            <WrapPanel Grid.Row="5" Margin="0,10,0,0">
+                                <Button x:Name="RetryLockedCleanupButton" Content="Повторить после закрытия программ" Style="{StaticResource SecondaryButton}"/>
+                            </WrapPanel>
+                            <TextBlock x:Name="ActivitySummaryText" Grid.Row="6" Text="Готово к запуску действия." TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,8,0,0"/>
+                        </Grid>
                     </Border>
                 </Grid>
             </TabItem>
@@ -162,8 +194,9 @@ $xaml = @'
                 <StackPanel Margin="18">
                     <TextBlock Text="Автоматическая уборка" FontSize="20" FontWeight="SemiBold" Foreground="#172B32"/>
                     <TextBlock x:Name="ScheduleText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,18"/>
+                    <TextBlock x:Name="ScheduleDiagnosticsText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,0,0,14"/>
                     <WrapPanel>
-                        <Button x:Name="InstallScheduleButton" Content="Переустановить задачи"/>
+                        <Button x:Name="InstallScheduleButton" Content="Проверить и починить задачи"/>
                         <Button x:Name="RepairShortcutButton" Content="Починить ярлыки PowerShell" Style="{StaticResource SecondaryButton}"/>
                     </WrapPanel>
                     <TextBlock Text="Pressure Guard запускает безопасную очистку только при достижении порогов свободного места. Глубокая еженедельная задача остаётся отдельной." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,14,0,0"/>
@@ -226,8 +259,15 @@ function Get-Control {
 $drivePanel = Get-Control "DrivePanel"
 $cachePanel = Get-Control "CachePanel"
 $overviewText = Get-Control "OverviewText"
+$protectionStateText = Get-Control "ProtectionStateText"
+$protectionCapacityText = Get-Control "ProtectionCapacityText"
+$protectionLastRunText = Get-Control "ProtectionLastRunText"
+$protectionSavingsText = Get-Control "ProtectionSavingsText"
+$lockedAppsText = Get-Control "LockedAppsText"
+$retryLockedCleanupButton = Get-Control "RetryLockedCleanupButton"
 $activitySummaryText = Get-Control "ActivitySummaryText"
 $scheduleText = Get-Control "ScheduleText"
+$scheduleDiagnosticsText = Get-Control "ScheduleDiagnosticsText"
 $systemSafetyText = Get-Control "SystemSafetyText"
 $logBox = Get-Control "LogBox"
 $activityProgress = Get-Control "ActivityProgress"
@@ -348,42 +388,267 @@ function Refresh-CacheControls {
     }
 }
 
+function Get-WinSweepLogDirectories {
+    $paths = New-Object System.Collections.ArrayList
+    $programDataLog = if ([string]::IsNullOrWhiteSpace($env:ProgramData)) { '' } else { Join-Path $env:ProgramData 'CodexWindowsCleanup\Logs' }
+    $tempLog = if ([string]::IsNullOrWhiteSpace($env:TEMP)) { '' } else { Join-Path $env:TEMP 'CodexWindowsCleanup\Logs' }
+    foreach ($path in @($programDataLog, $tempLog)) {
+        if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue)) {
+            [void]$paths.Add($path)
+        }
+    }
+    return @($paths | Select-Object -Unique)
+}
+
+function Convert-ReclaimedTextToBytes {
+    param([string]$Text)
+
+    $match = [regex]::Match($Text, '^\s*([0-9\s.,]+)\s*(bytes|KB|MB|GB|TB)\s*$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $match.Success) {
+        return [int64]0
+    }
+
+    $numberText = $match.Groups[1].Value -replace '\s', ''
+    $numberText = $numberText.Replace(',', '.')
+    [double]$number = 0
+    if (-not [double]::TryParse($numberText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$number)) {
+        return [int64]0
+    }
+
+    $multiplier = switch ($match.Groups[2].Value.ToUpperInvariant()) {
+        'TB' { 1TB }
+        'GB' { 1GB }
+        'MB' { 1MB }
+        'KB' { 1KB }
+        default { 1 }
+    }
+    return [int64][Math]::Round($number * $multiplier)
+}
+
+function Get-CleanupRunSummary {
+    param([System.IO.FileInfo]$Log)
+
+    try {
+        $lines = @(Get-Content -LiteralPath $Log.FullName -Encoding UTF8 -ErrorAction Stop)
+        $start = @($lines | Where-Object { $_ -match 'Windows cleanup started' } | Select-Object -First 1)
+        $finish = @($lines | Where-Object { $_ -match 'Windows cleanup finished|Analyze finished|Preview finished' } | Select-Object -Last 1)
+        if ($finish.Count -eq 0) {
+            return $null
+        }
+
+        $finishLine = [string]$finish[0]
+        $amount = ''
+        $amountMatch = [regex]::Match($finishLine, 'reclaimed about (.*?), (?:blocked|failures|errors)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($amountMatch.Success) {
+            $amount = $amountMatch.Groups[1].Value
+        }
+
+        [int]$removed = 0
+        $removedMatch = [regex]::Match($finishLine, 'Removed ([0-9]+) item', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($removedMatch.Success) {
+            $removed = [int]$removedMatch.Groups[1].Value
+        }
+
+        [int]$locked = 0
+        $lockedMatch = [regex]::Match($finishLine, 'blocked: ([0-9]+)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($lockedMatch.Success) {
+            $locked = [int]$lockedMatch.Groups[1].Value
+        }
+        else {
+            $legacyMatch = [regex]::Match($finishLine, 'failures: ([0-9]+)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($legacyMatch.Success) {
+                $locked = [int]$legacyMatch.Groups[1].Value
+            }
+        }
+
+        [int]$errors = 0
+        $errorMatch = [regex]::Match($finishLine, 'errors: ([0-9]+)', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if ($errorMatch.Success) {
+            $errors = [int]$errorMatch.Groups[1].Value
+        }
+
+        $apps = New-Object System.Collections.ArrayList
+        foreach ($line in $lines) {
+            $appMatch = [regex]::Match([string]$line, 'Preflight open app: ([^;]+);', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+            if ($appMatch.Success -and -not $apps.Contains($appMatch.Groups[1].Value)) {
+                [void]$apps.Add($appMatch.Groups[1].Value)
+            }
+        }
+
+        $startLine = if ($start.Count -gt 0) { [string]$start[0] } else { '' }
+        return [pscustomobject]@{
+            Time = $Log.LastWriteTime
+            AmountText = $amount
+            ReclaimedBytes = Convert-ReclaimedTextToBytes -Text $amount
+            RemovedItems = $removed
+            LockedItems = $locked
+            Errors = $errors
+            OpenApps = @($apps)
+            IsSmartGuard = ($startLine -match 'SmartGuard=True')
+            LogPath = $Log.FullName
+        }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-CleanupRunSummaries {
+    $files = New-Object System.Collections.ArrayList
+    foreach ($directory in Get-WinSweepLogDirectories) {
+        Get-ChildItem -LiteralPath $directory -Filter 'cleanup-*.log' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { [void]$files.Add($_) }
+    }
+
+    foreach ($file in @($files | Sort-Object LastWriteTime -Descending | Select-Object -Unique -First 80)) {
+        $summary = Get-CleanupRunSummary -Log $file
+        if ($null -ne $summary) {
+            $summary
+        }
+    }
+}
+
 function Get-ScheduleHealth {
     $taskPath = '\Codex Windows Cleanup\'
     $expectedNames = @('Pressure Guard', 'Startup Guard', 'Deep Weekly')
-
-    try {
-        $tasks = @(Get-ScheduledTask -TaskPath $taskPath -ErrorAction Stop)
-    }
-    catch {
-        return 'Задания не установлены.'
-    }
+    $expectedScript = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'cleanup-windows.ps1'))
+    $missing = New-Object System.Collections.ArrayList
+    $pathProblems = New-Object System.Collections.ArrayList
+    $resultProblems = New-Object System.Collections.ArrayList
+    $records = New-Object System.Collections.ArrayList
 
     foreach ($name in $expectedNames) {
-        $task = @($tasks | Where-Object { $_.TaskName -eq $name }) | Select-Object -First 1
-        if ($null -eq $task) {
-            return 'Не все задания установлены.'
-        }
-
-        foreach ($action in @($task.Actions)) {
-            $arguments = [string]$action.Arguments
-            $match = [regex]::Match($arguments, '-File\s+"([^"]+)"', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
-            if ($match.Success -and -not (Test-Path -LiteralPath $match.Groups[1].Value -PathType Leaf)) {
-                return 'Задания указывают на отсутствующий движок. Нажми «Переустановить задачи».'
+        try {
+            $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $name -ErrorAction Stop
+            $info = $task | Get-ScheduledTaskInfo -ErrorAction Stop
+            $actionMatches = 0
+            foreach ($action in @($task.Actions)) {
+                $match = [regex]::Match([string]$action.Arguments, '-File\s+"([^"]+)"', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+                if (-not $match.Success) {
+                    continue
+                }
+                $actionMatches++
+                $actualScript = [IO.Path]::GetFullPath($match.Groups[1].Value)
+                if (-not [string]::Equals($actualScript, $expectedScript, [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $actualScript -PathType Leaf)) {
+                    [void]$pathProblems.Add($name)
+                }
             }
+            if ($actionMatches -eq 0) {
+                [void]$pathProblems.Add($name)
+            }
+
+            [int]$result = $info.LastTaskResult
+            if ($result -notin @(0, 267009, 267011)) {
+                [void]$resultProblems.Add($name)
+            }
+            [void]$records.Add([pscustomobject]@{
+                Name = $name
+                LastRun = [datetime]$info.LastRunTime
+                NextRun = [datetime]$info.NextRunTime
+                LastResult = $result
+            })
+        }
+        catch {
+            [void]$missing.Add($name)
         }
     }
 
-    return 'Задания подключены к текущему движку.'
+    $lastRun = @($records | Where-Object { $_.LastRun.Year -ge 2000 } | Sort-Object LastRun -Descending | Select-Object -First 1)
+    $nextRun = @($records | Where-Object { $_.NextRun -gt (Get-Date) } | Sort-Object NextRun | Select-Object -First 1)
+    $lastRunValue = if ($lastRun.Count -gt 0) { $lastRun[0].LastRun } else { [datetime]::MinValue }
+    $nextRunValue = if ($nextRun.Count -gt 0) { $nextRun[0].NextRun } else { [datetime]::MinValue }
+
+    if ($missing.Count -gt 0) {
+        return [pscustomobject]@{ IsHealthy = $false; Summary = 'Не все задачи установлены.'; Detail = 'Нет задач: ' + ($missing -join ', ') + '. Нажми «Проверить и починить задачи».'; LastRun = $lastRunValue; NextRun = $nextRunValue }
+    }
+    if ($pathProblems.Count -gt 0) {
+        return [pscustomobject]@{ IsHealthy = $false; Summary = 'Найден старый или отсутствующий путь.'; Detail = 'Путь движка не совпадает у: ' + (($pathProblems | Select-Object -Unique) -join ', ') + '. Нажми «Проверить и починить задачи».'; LastRun = $lastRunValue; NextRun = $nextRunValue }
+    }
+    if ($resultProblems.Count -gt 0) {
+        return [pscustomobject]@{ IsHealthy = $false; Summary = 'Есть задача с кодом ошибки.'; Detail = 'Проверь журналы и переустанови задачу: ' + (($resultProblems | Select-Object -Unique) -join ', ') + '.'; LastRun = $lastRunValue; NextRun = $nextRunValue }
+    }
+
+    return [pscustomobject]@{ IsHealthy = $true; Summary = 'Задачи подключены к текущему движку.'; Detail = 'Путь всех трёх задач совпадает с текущим WinSweepData.'; LastRun = $lastRunValue; NextRun = $nextRunValue }
 }
 
 function Refresh-Summary {
-    $features = $script:Config.features
     $enabled = @($script:CacheCheckboxes.GetEnumerator() | Where-Object { $_.Value.IsChecked } | ForEach-Object { $_.Value.Content })
     $profile = [string](Get-ConfigValue -Object $script:Config -Name 'defaultProfile' -Fallback 'Safe')
     $schedule = $script:Config.schedule
-    $overviewText.Text = "Профиль по умолчанию: $profile. Включено переключателей: $($enabled.Count). Последняя проверка дисков обновляется кнопкой «Обновить»."
-    $scheduleText.Text = "Pressure Guard: каждые $([int](Get-ConfigValue -Object $schedule -Name 'guardEveryHours' -Fallback 3)) ч. с $([string](Get-ConfigValue -Object $schedule -Name 'guardStart' -Fallback '00:15')). Deep Weekly: $([string](Get-ConfigValue -Object $schedule -Name 'deepDay' -Fallback 'Sunday')) в $([string](Get-ConfigValue -Object $schedule -Name 'deepWeekly' -Fallback '03:20')). $(Get-ScheduleHealth)"
+    $thresholds = $script:Config.thresholds
+    $guardDrive = [string](Get-ConfigValue -Object $script:Config.paths -Name 'guardDrive' -Fallback 'C:')
+    $guardDrive = $guardDrive.TrimEnd('\')
+    [int]$minFreeGB = Get-ConfigValue -Object $thresholds -Name 'minFreeGB' -Fallback 35
+    [int]$minFreePercent = Get-ConfigValue -Object $thresholds -Name 'minFreePercent' -Fallback 18
+    $perDrive = Get-ConfigValue -Object $thresholds -Name 'perDrive' -Fallback $null
+    $perDriveThreshold = Get-ConfigValue -Object $perDrive -Name $guardDrive -Fallback $null
+    if ($null -ne $perDriveThreshold) {
+        $minFreeGB = [int](Get-ConfigValue -Object $perDriveThreshold -Name 'minFreeGB' -Fallback $minFreeGB)
+        $minFreePercent = [int](Get-ConfigValue -Object $perDriveThreshold -Name 'minFreePercent' -Fallback $minFreePercent)
+    }
+
+    $health = Get-ScheduleHealth
+    $stateColor = if ($health.IsHealthy) { '#147D78' } else { '#C2413D' }
+    $protectionStateText.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString($stateColor)
+    $protectionStateText.Text = $health.Summary
+
+    try {
+        $drive = New-Object System.IO.DriveInfo ("{0}\" -f $guardDrive)
+        if ($drive.IsReady) {
+            $freePercent = [Math]::Round(($drive.AvailableFreeSpace / $drive.TotalSize) * 100, 1)
+            $belowTarget = $drive.AvailableFreeSpace -lt ($minFreeGB * 1GB) -or $freePercent -lt $minFreePercent
+            $protectionCapacityText.Text = "{0} свободно ({1:N1}%). Цель: {2} GB / {3}%{4}" -f (Format-Bytes $drive.AvailableFreeSpace), $freePercent, $minFreeGB, $minFreePercent, $(if ($belowTarget) { ' · уборка включена' } else { ' · порог не достигнут' })
+        }
+        else {
+            $protectionCapacityText.Text = "$guardDrive недоступен."
+        }
+    }
+    catch {
+        $protectionCapacityText.Text = "Не удалось прочитать $guardDrive."
+    }
+
+    $runs = @(Get-CleanupRunSummaries)
+    $latestRun = @($runs | Sort-Object Time -Descending | Select-Object -First 1)
+    $latestRunValue = if ($latestRun.Count -gt 0) { $latestRun[0] } else { $null }
+    if ($null -ne $latestRunValue) {
+        $amountText = if ([string]::IsNullOrWhiteSpace($latestRunValue.AmountText)) { 'без измеримого объёма' } else { $latestRunValue.AmountText }
+        $protectionLastRunText.Text = "{0:dd.MM HH:mm} · {1}" -f $latestRunValue.Time, $amountText
+    }
+    elseif ($health.LastRun.Year -ge 2000) {
+        $protectionLastRunText.Text = "{0:dd.MM HH:mm} · без лога" -f $health.LastRun
+    }
+    else {
+        $protectionLastRunText.Text = 'Запусков пока нет.'
+    }
+
+    $weekStart = (Get-Date).AddDays(-7)
+    [int64]$weekBytes = 0
+    $weekRuns = @($runs | Where-Object { $_.Time -ge $weekStart })
+    foreach ($run in $weekRuns) {
+        $weekBytes += [int64]$run.ReclaimedBytes
+    }
+    $protectionSavingsText.Text = "За 7 дней: {0}`nЗапусков: {1}" -f (Format-Bytes $weekBytes), $weekRuns.Count
+
+    if ($null -ne $latestRunValue -and $latestRunValue.Errors -gt 0) {
+        $lockedAppsText.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString('#C2413D')
+        $lockedAppsText.Text = "Последняя уборка завершилась с ошибками: $($latestRunValue.Errors). Открой полный журнал перед повтором."
+        $retryLockedCleanupButton.IsEnabled = $false
+    }
+    elseif ($null -ne $latestRunValue -and $latestRunValue.LockedItems -gt 0) {
+        $lockedAppsText.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString('#C47A22')
+        $appsText = if ($latestRunValue.OpenApps.Count -gt 0) { ' Открыты: ' + ($latestRunValue.OpenApps -join ', ') + '.' } else { '' }
+        $lockedAppsText.Text = "Пропущено занятых файлов: $($latestRunValue.LockedItems). Это не сбой: закрой приложения и повтори очистку.$appsText"
+        $retryLockedCleanupButton.IsEnabled = $true
+    }
+    else {
+        $lockedAppsText.Foreground = [Windows.Media.BrushConverter]::new().ConvertFromString('#5A6B72')
+        $lockedAppsText.Text = 'Последняя уборка завершилась без занятых файлов.'
+        $retryLockedCleanupButton.IsEnabled = $false
+    }
+
+    $overviewText.Text = "Профиль: $profile. Включено переключателей: $($enabled.Count). Следующая задача: $($(if ($health.NextRun.Year -ge 2000) { $health.NextRun.ToString('dd.MM HH:mm') } else { 'не определена' }))."
+    $scheduleText.Text = "Pressure Guard: каждые $([int](Get-ConfigValue -Object $schedule -Name 'guardEveryHours' -Fallback 3)) ч. с $([string](Get-ConfigValue -Object $schedule -Name 'guardStart' -Fallback '00:15')). Deep Weekly: $([string](Get-ConfigValue -Object $schedule -Name 'deepDay' -Fallback 'Sunday')) в $([string](Get-ConfigValue -Object $schedule -Name 'deepWeekly' -Fallback '03:20')). $($health.Summary)"
+    $scheduleDiagnosticsText.Text = $health.Detail
 }
 
 function Refresh-SystemSummary {
@@ -481,6 +746,7 @@ function Complete-WinSweepAction {
     Add-Log $result
     try {
         Refresh-Drives
+        Refresh-Summary
         Refresh-SystemSummary
     }
     catch {
@@ -661,6 +927,7 @@ $controls = @{
     RefreshButton = { Refresh-Drives; Refresh-Summary; Refresh-SystemSummary; Add-Log "Данные обновлены." }
     OpenFolderButton = { Open-ExternalPath -Path $PSScriptRoot }
     RecommendedCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-SmartGuard','-OpenReport','-ConfigPath',$script:ConfigPath) }
+    RetryLockedCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-SmartGuard','-OpenReport','-ConfigPath',$script:ConfigPath) }
     AnalyzeButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Analyze','-Profile','Emergency','-OpenReport','-ConfigPath',$script:ConfigPath) }
     SafeCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile','Safe','-OpenReport','-ConfigPath',$script:ConfigPath) }
     SmartCleanupButton = { Start-WinSweepScript -FileName 'cleanup-windows.ps1' -ScriptArguments @('-SmartGuard','-AggressiveSafe','-CleanDeveloperCaches','-CleanRegistry','-ConfigPath',$script:ConfigPath) }
@@ -685,7 +952,7 @@ $controls = @{
 }
 
 $script:ActionControlNames = @(
-    'RecommendedCleanupButton', 'AnalyzeButton', 'SafeCleanupButton', 'SmartCleanupButton',
+    'RecommendedCleanupButton', 'RetryLockedCleanupButton', 'AnalyzeButton', 'SafeCleanupButton', 'SmartCleanupButton',
     'SpaceHogButton', 'OpenReportButton', 'HistoryButton', 'InstallScheduleButton',
     'RepairShortcutButton', 'SystemStatusButton', 'AnalyzeComponentStoreButton',
     'DeepMaintenanceButton', 'DisableHibernationButton', 'EnableHibernationButton',

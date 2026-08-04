@@ -46,7 +46,7 @@ function Get-AmountFromLines {
     param([string[]]$Lines)
 
     foreach ($line in $Lines) {
-        if ($line -match "about (.*?), failures") {
+        if ($line -match "about (.*?), (?:blocked|failures|errors)") {
             return $Matches[1]
         }
     }
@@ -89,14 +89,19 @@ $rows = foreach ($log in $logs) {
         "Clean"
     }
     $amount = Get-AmountFromLines -Lines $finish
-    $failures = Get-FirstMatch -Lines $finish -Pattern "failures: ([0-9]+)"
+    $locked = Get-FirstMatch -Lines $finish -Pattern "blocked: ([0-9]+)"
+    if ([string]::IsNullOrWhiteSpace($locked)) {
+        $locked = Get-FirstMatch -Lines $finish -Pattern "failures: ([0-9]+)"
+    }
+    $errors = Get-FirstMatch -Lines $finish -Pattern "errors: ([0-9]+)"
 
     [pscustomobject]@{
         Time = $log.LastWriteTime.ToString("yyyy-MM-dd HH:mm")
         Mode = $mode
         Profile = $profile
         Amount = $amount
-        Failures = $failures
+        Locked = $locked
+        Errors = $errors
         Version = $version
         Log = $log.FullName
     }
