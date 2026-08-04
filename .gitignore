@@ -12,6 +12,7 @@ release-notes.md
 WinSweepRuns/
 launcher/assets/winsweep-icon-source.png
 .dotnet-build-*.txt
+.desktop-native-update-*.txt
 .dotnet-tmp/
 .native-ui-smoke*
 .pagefile-*.json
