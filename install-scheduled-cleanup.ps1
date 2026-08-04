@@ -191,7 +191,7 @@ function Register-CleanupTask {
     if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
         $configArg = " -ConfigPath `"$ConfigPath`""
     }
-    $actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $CleanupArgs$configArg"
+    $actionArgs = "-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`" $CleanupArgs$configArg"
     $action = New-ScheduledTaskAction -Execute $powershellPath -Argument $actionArgs
     $settings = New-ScheduledTaskSettingsSet `
         -Compatibility Win8 `
@@ -199,6 +199,7 @@ function Register-CleanupTask {
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries `
         -MultipleInstances IgnoreNew `
+        -Hidden `
         -ExecutionTimeLimit $ExecutionTimeLimit
     $task = New-ScheduledTask -Action $action -Trigger $Trigger -Settings $settings -Principal $principal -Description $Description
     Register-ScheduledTask -TaskPath $taskPath -TaskName $Name -InputObject $task -Force | Out-Null

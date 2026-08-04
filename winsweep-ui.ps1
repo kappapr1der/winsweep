@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.1.1"
+$script:WinSweepVersion = "1.1.2"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -377,7 +377,7 @@ function Refresh-CacheControls {
         browserCaches = 'Браузеры'
         developerCaches = 'Инструменты разработки'
         gameCaches = 'Игровые лаунчеры'
-        notifyOnPressure = 'Уведомления о нехватке места'
+        notifyOnPressure = 'Уведомления с итогом очистки'
     }
     foreach ($entry in $labels.GetEnumerator()) {
         $check = New-Object System.Windows.Controls.CheckBox

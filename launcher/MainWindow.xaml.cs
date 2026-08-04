@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -15,7 +16,7 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.1.1";
+    private const string Version = "1.1.2";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
 
     private readonly string _engineRoot;
@@ -241,7 +242,7 @@ public partial class MainWindow : Window
             ("spotifyCache", "Spotify"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
             ("slackCache", "Slack"), ("teamsCache", "Microsoft Teams"), ("zoomCache", "Zoom"),
             ("browserCaches", "Браузеры"), ("developerCaches", "Инструменты разработки"),
-            ("gameCaches", "Игровые лаунчеры"), ("notifyOnPressure", "Уведомления о нехватке места")
+            ("gameCaches", "Игровые лаунчеры"), ("notifyOnPressure", "Уведомления с итогом очистки")
         };
 
         foreach (var (key, label) in labels)
@@ -326,11 +327,29 @@ public partial class MainWindow : Window
 
         try
         {
-            var finish = File.ReadLines(latest.FullName, Encoding.UTF8)
-                .LastOrDefault(line => line.Contains("Windows cleanup finished", StringComparison.OrdinalIgnoreCase));
-            return string.IsNullOrWhiteSpace(finish)
-                ? $"Последний журнал: {latest.LastWriteTime:dd.MM HH:mm}."
-                : $"{latest.LastWriteTime:dd.MM HH:mm} · {finish.Trim()}";
+            var lines = File.ReadAllLines(latest.FullName, Encoding.UTF8);
+            var finish = lines.LastOrDefault(line => line.Contains("Windows cleanup finished", StringComparison.OrdinalIgnoreCase));
+            if (string.IsNullOrWhiteSpace(finish))
+            {
+                return $"Последний журнал: {latest.LastWriteTime:dd.MM HH:mm}.";
+            }
+
+            var match = Regex.Match(finish, @"Removed (?<items>\d+) item\(s\), reclaimed about (?<size>[^,]+), blocked: (?<blocked>\d+), errors: (?<errors>\d+)\.", RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                return $"Последняя очистка: {latest.LastWriteTime:dd.MM HH:mm}.";
+            }
+
+            var categories = lines
+                .Where(line => line.Contains(" Cleaned ", StringComparison.OrdinalIgnoreCase))
+                .Select(line => Regex.Match(line, @"Cleaned (?<label>.+): \d+ item\(s\), about [^.]+\.", RegexOptions.IgnoreCase))
+                .Where(item => item.Success)
+                .Select(item => item.Groups["label"].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+            var categoryText = categories.Length == 0 ? string.Empty : $" Очищено: {string.Join(", ", categories)}.";
+            return $"{latest.LastWriteTime:dd.MM HH:mm}: освобождено {match.Groups["size"].Value}, удалено {match.Groups["items"].Value} объектов.{categoryText}";
         }
         catch
         {

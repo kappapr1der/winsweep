@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.1.1"
+$script:WinSweepVersion = "1.1.2"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -1022,59 +1022,76 @@ function Test-ShouldRunSmartGuard {
     return $false
 }
 
-function Show-PressureNotification {
-    param(
-        $Snapshot,
-        [int]$MinimumFreeGB,
-        [int]$MinimumFreePercent
-    )
+function Get-NotificationLabel {
+    param([string]$Label)
 
-    if (-not $NotifyOnPressure -or $Quiet -or $null -eq $Snapshot) {
+    $labels = @{
+        "user temp" = "временные файлы"
+        "local app temp" = "временные файлы приложений"
+        "Windows temp" = "временные файлы Windows"
+        "Windows error reports" = "отчёты об ошибках Windows"
+        "DirectX shader cache" = "кэш шейдеров DirectX"
+        "Windows Update download cache" = "кэш Windows Update"
+        "Delivery Optimization cache" = "кэш оптимизации доставки"
+        "Microsoft Edge cache" = "кэш Microsoft Edge"
+        "Google Chrome cache" = "кэш Google Chrome"
+        "Brave cache" = "кэш Brave"
+        "Firefox cache" = "кэш Firefox"
+    }
+
+    if ($labels.ContainsKey($Label)) {
+        return $labels[$Label]
+    }
+
+    return $Label
+}
+
+function Show-CleanupNotification {
+    param($After)
+
+    if (-not $NotifyOnPressure -or $Quiet) {
         return
     }
 
     try {
-        $spaceHogScript = Join-Path $PSScriptRoot "space-hog-report.ps1"
-        $hogSummary = ""
-        if (Test-Path -LiteralPath $spaceHogScript -PathType Leaf -ErrorAction SilentlyContinue) {
-            try {
-                $hogSummary = @(
-                    & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-                        -File $spaceHogScript `
-                        -Drives $Snapshot.Drive `
-                        -Quick `
-                        -NotificationSummary `
-                        -Top 3 2>$null
-                ) -join " "
-                $hogSummary = $hogSummary.Trim()
+        $rows = @($script:TargetResults | Where-Object { $_.Bytes -gt 0 } | Sort-Object Bytes -Descending)
+        $title = "WinSweep: очистка завершена"
+        if ($script:DeletedItems -gt 0) {
+            $notificationText = "Освобождено: $(Format-ByteSize $script:DeletedBytes). Удалено: $($script:DeletedItems) объектов."
+            $categories = @(
+                foreach ($row in ($rows | Select-Object -First 3)) {
+                    "$(Get-NotificationLabel -Label $row.Label) ($(Format-ByteSize ([int64]$row.Bytes)))"
+                }
+            )
+            if ($categories.Count -gt 0) {
+                $notificationText += "`nОчищено: $($categories -join ', ')."
             }
-            catch {
-                Write-Log "Could not collect pressure summary. $($_.Exception.Message)" "WARN"
-            }
+        }
+        else {
+            $notificationText = "Безопасный кэш для удаления не найден."
         }
 
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
-        $notify = New-Object System.Windows.Forms.NotifyIcon
-        $notify.Icon = [System.Drawing.SystemIcons]::Warning
-        $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
-        $notify.BalloonTipTitle = "WinSweep: мало места"
-        $notificationText = ("{0}: свободно {1} ({2}%). Порог: {3} GB или {4}%." -f $Snapshot.Drive, (Format-ByteSize $Snapshot.FreeBytes), $Snapshot.FreePercent, $MinimumFreeGB, $MinimumFreePercent)
-        if (-not [string]::IsNullOrWhiteSpace($hogSummary)) {
-            $notificationText += "`nКрупнейшие категории: $hogSummary"
+        if ($null -ne $After) {
+            $notificationText += "`n$($After.Drive): свободно $(Format-ByteSize ([int64]$After.FreeBytes)) ($($After.FreePercent)%)."
         }
-        $notificationText += "`nЗапускаю безопасную очистку."
+
         if ($notificationText.Length -gt 240) {
             $notificationText = $notificationText.Substring(0, 237) + "..."
         }
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $notify = New-Object System.Windows.Forms.NotifyIcon
+        $notify.Icon = [System.Drawing.SystemIcons]::Information
+        $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+        $notify.BalloonTipTitle = $title
         $notify.BalloonTipText = $notificationText
         $notify.Visible = $true
-        $notify.ShowBalloonTip(8000)
-        Start-Sleep -Seconds 8
+        $notify.ShowBalloonTip(7000)
+        Start-Sleep -Seconds 7
         $notify.Dispose()
     }
     catch {
-        Write-Log "Could not show low-space notification. $($_.Exception.Message)" "WARN"
+        Write-Log "Could not show cleanup notification. $($_.Exception.Message)" "WARN"
     }
 }
 
@@ -1794,10 +1811,6 @@ if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumF
     exit 0
 }
 
-if ($SmartGuard) {
-    Show-PressureNotification -Snapshot $script:LastGuardSnapshot -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent
-}
-
 $startSnapshot = Get-DriveSnapshot -Drive $GuardDrive
 
 Invoke-PreflightCheck
@@ -1922,6 +1935,7 @@ if ($DryRun) {
 else {
     Write-Log ("Windows cleanup finished. Removed {0} item(s), reclaimed about {1}, blocked: {2}, errors: {3}." -f $script:DeletedItems, (Format-ByteSize $script:DeletedBytes), $script:LockedItems, $script:FailedItems)
     Show-ScanResults -Mode "clean"
+    Show-CleanupNotification -After $endSnapshot
     $summaryLines = @(
         ("removed: {0} item(s)" -f $script:DeletedItems),
         ("reclaimed: {0}" -f (Format-ByteSize $script:DeletedBytes)),
