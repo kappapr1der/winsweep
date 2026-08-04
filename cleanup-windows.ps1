@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.0.7"
+$script:WinSweepVersion = "1.0.8"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -547,7 +547,10 @@ function Add-AdminRetryHint {
 }
 
 function Test-IsLockedResourceException {
-    param([System.Exception]$Exception)
+    param(
+        [System.Exception]$Exception,
+        [string]$Path = ""
+    )
 
     $current = $Exception
     while ($null -ne $current) {
@@ -558,6 +561,12 @@ function Test-IsLockedResourceException {
 
         $message = [string]$current.Message
         if ($message -match 'being used by another process|used by another process|used by another program|используется другим процессом|используется другой программой') {
+            return $true
+        }
+
+        # PyInstaller keeps its active runtime DLLs under %TEMP%\_MEI... and reports
+        # ERROR_ACCESS_DENIED in Russian Windows instead of a sharing violation.
+        if ($current.HResult -eq -2147024891 -and $Path -match '(?i)\\Temp\\_MEI\d+(\\|$)') {
             return $true
         }
 
@@ -575,7 +584,7 @@ function Register-RemovalIssue {
         [System.Exception]$Exception
     )
 
-    if (Test-IsLockedResourceException -Exception $Exception) {
+    if (Test-IsLockedResourceException -Exception $Exception -Path $Path) {
         $script:LockedItems += 1
         Add-CloseHint -Label $Label
         Write-Log "Skipped locked $ItemType for ${Label}: $Path. $($Exception.Message)" "WARN"

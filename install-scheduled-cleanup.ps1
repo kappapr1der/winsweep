@@ -282,19 +282,19 @@ $deepTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $DeepDay -At $DeepWe
 Register-CleanupTask `
     -Name "Pressure Guard" `
     -Trigger $guardTriggers `
-    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 1$optionalArgs" `
+    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
     -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low."
 
 Register-CleanupTask `
     -Name "Startup Guard" `
     -Trigger $logonTrigger `
-    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 1$optionalArgs" `
+    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
     -Description "Checks disk pressure shortly after logon and cleans safe caches only when free space is low."
 
 Register-CleanupTask `
     -Name "Deep Weekly" `
     -Trigger $deepTrigger `
-    -CleanupArgs "-Deep -AggressiveSafe -TempOlderThanDays 1 -CacheOlderThanDays 3$optionalArgs" `
+    -CleanupArgs "-Deep -AggressiveSafe -TempOlderThanDays 1 -CacheOlderThanDays 0$optionalArgs" `
     -Description "Weekly deeper cleanup including Windows component cleanup."
 
 Write-Host ""

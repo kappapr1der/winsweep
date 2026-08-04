@@ -4,7 +4,7 @@
     "minFreeGB": 35,
     "minFreePercent": 18,
     "tempOlderThanDays": 1,
-    "cacheOlderThanDays": 3,
+    "cacheOlderThanDays": 0,
     "logRetentionDays": 30,
     "perDrive": {
       "C:": {
@@ -20,7 +20,7 @@
     "excludedPaths": []
   },
   "features": {
-    "aggressiveSafe": false,
+    "aggressiveSafe": true,
     "browserCaches": true,
     "appCaches": true,
     "spotifyCache": true,
