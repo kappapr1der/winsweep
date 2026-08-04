@@ -6,13 +6,17 @@
 
 ## Portable-версия
 
+Для локальной сборки из исходников нужен .NET 8 SDK. Пользовательская
+portable-версия остаётся self-contained: после загрузки архива отдельно
+устанавливать .NET не требуется.
+
 Собрать архив локально:
 
 ```powershell
-.\build-release.ps1 -Version 1.0.9 -Portable
+.\build-release.ps1 -Version 1.1.0 -Portable
 ```
 
-Готовый файл появится в `dist\WinSweep-Portable-v1.0.9.zip`. После первого
+Готовый файл появится в `dist\WinSweep-Portable-v1.1.0.zip`. После первого
 запуска `WinSweep.exe` создаст скрытую папку `WinSweepData` рядом с собой.
 В ней находятся настройки и внутренний движок, поэтому всю папку можно
 переносить целиком.
@@ -20,7 +24,7 @@
 Обычная сборка остаётся доступна для совместимости:
 
 ```powershell
-.\build-release.ps1 -Version 1.0.9
+.\build-release.ps1 -Version 1.1.0
 ```
 
 ## Автоматический релиз GitHub Actions
@@ -28,8 +32,8 @@
 GitHub Actions собирает релиз после пуша тега:
 
 ```powershell
-git tag v1.0.9
-git push origin v1.0.9
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Это работает, только пока для аккаунта разрешён запуск Actions. При ошибке
@@ -48,19 +52,19 @@ GitHub Actions.
 Затем опубликуй portable-архив:
 
 ```powershell
-.\publish-release.ps1 -Version 1.0.9 -Portable
+.\publish-release.ps1 -Version 1.1.0 -Portable
 ```
 
-Сценарий собирает ZIP, создаёт или использует тег `v1.0.9` и прикрепляет архив
+Сценарий собирает ZIP, создаёт или использует тег `v1.1.0` и прикрепляет архив
 к GitHub Release. Токен сохраняется зашифрованным через DPAPI в
 `%APPDATA%\WinSweep\github-token.txt`, а в репозиторий не попадает.
 
 Полезные варианты:
 
 ```powershell
-.\publish-release.ps1 -Version 1.0.9 -Portable -DryRun
-.\publish-release.ps1 -Version 1.0.9 -Portable -Prerelease
-.\publish-release.ps1 -Version 1.0.9 -Portable -UpdateExisting -ReplaceAsset
+.\publish-release.ps1 -Version 1.1.0 -Portable -DryRun
+.\publish-release.ps1 -Version 1.1.0 -Portable -Prerelease
+.\publish-release.ps1 -Version 1.1.0 -Portable -UpdateExisting -ReplaceAsset
 .\save-github-token.ps1 -Clear
 ```
 

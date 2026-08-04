@@ -11,3 +11,9 @@ launcher/WinSweepPayload.zip
 release-notes.md
 WinSweepRuns/
 launcher/assets/winsweep-icon-source.png
+.dotnet-build-*.txt
+.dotnet-tmp/
+.native-ui-smoke*
+.pagefile-*.json
+.pagefile-*.txt
+.system-space-audit.txt

@@ -30,18 +30,15 @@ if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $payloadRootFull -PathType Container)) {
     throw "Payload root was not found: $payloadRootFull"
 }
-$compilerCandidates = @(
-    (Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
-    (Join-Path $env:WINDIR "Microsoft.NET\Framework\v4.0.30319\csc.exe")
-)
-$compiler = $compilerCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-if ([string]::IsNullOrWhiteSpace($compiler)) {
-    throw "The Windows C# compiler was not found. WinSweep.exe requires .NET Framework 4.8 build tools on the build machine."
+$dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+if ($null -eq $dotnet) {
+    throw "dotnet SDK 8 or newer was not found. Install the .NET 8 SDK to build WinSweep.exe."
 }
 
 $buildRoot = Join-Path $root ".launcher-build"
 $payloadZip = Join-Path $launcherRoot "WinSweepPayload.zip"
-$builtExe = Join-Path $buildRoot "WinSweep.exe"
+$publishRoot = Join-Path $buildRoot "publish"
+$builtExe = Join-Path $publishRoot "WinSweep.exe"
 
 if (Test-Path -LiteralPath $buildRoot) {
     Remove-Item -LiteralPath $buildRoot -Recurse -Force
@@ -59,25 +56,26 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
     $false)
 
 try {
-    $compilerArguments = @(
-        "/nologo",
-        "/target:winexe",
-        "/optimize+",
-        "/out:$builtExe",
-        "/reference:System.Windows.Forms.dll",
-        "/reference:System.IO.Compression.dll",
-        "/reference:System.IO.Compression.FileSystem.dll",
-        "/win32icon:$icon",
-        "/resource:$payloadZip,WinSweepPayload.zip"
+    $publishArguments = @(
+        "publish",
+        $project,
+        "--configuration", "Release",
+        "--runtime", "win-x64",
+        "--self-contained", "true",
+        "--output", $publishRoot,
+        "-p:PublishSingleFile=true",
+        "-p:IncludeNativeLibrariesForSelfExtract=true",
+        "-p:EnableCompressionInSingleFile=true",
+        "-p:BaseIntermediateOutputPath=$buildRoot\obj\",
+        "-p:BaseOutputPath=$buildRoot\bin\"
     )
     if ($Portable) {
-        $compilerArguments += "/define:PORTABLE"
+        $publishArguments += "-p:PortableBuild=true"
     }
-    $compilerArguments += $program
 
-    & $compiler @compilerArguments
+    & $dotnet.Source @publishArguments
     if ($LASTEXITCODE -ne 0) {
-        throw "C# compilation failed with exit code $LASTEXITCODE."
+        throw ".NET 8 publication failed with exit code $LASTEXITCODE."
     }
 
     if (-not (Test-Path -LiteralPath $builtExe -PathType Leaf)) {

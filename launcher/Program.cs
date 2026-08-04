@@ -1,9 +1,11 @@
 using System;
-using System.Diagnostics;
-using System.IO;
 using System.IO.Compression;
+using System.IO;
+using System.Linq;
 using System.Reflection;
-using System.Windows.Forms;
+using System.Windows;
+
+namespace WinSweepLauncher;
 
 internal static class Program
 {
@@ -14,116 +16,86 @@ internal static class Program
     {
         try
         {
-#if PORTABLE
-            var engineRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WinSweepData");
-#else
-            var engineRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WinSweep",
-                "Engine");
-#endif
-            var testMode = false;
-            foreach (var argument in Environment.GetCommandLineArgs())
-            {
-                if (string.Equals(argument, "--test", StringComparison.OrdinalIgnoreCase))
-                {
-                    testMode = true;
-                }
-            }
-
+            var engineRoot = GetEngineRoot();
             Directory.CreateDirectory(engineRoot);
             ExtractPayload(engineRoot);
 
-            var powerShell = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                "System32",
-                "WindowsPowerShell",
-                "v1.0",
-                "powershell.exe");
-            var uiScript = Path.Combine(engineRoot, "winsweep-ui.ps1");
-            if (!File.Exists(powerShell) || !File.Exists(uiScript))
+            if (Environment.GetCommandLineArgs().Any(argument =>
+                    string.Equals(argument, "--test", StringComparison.OrdinalIgnoreCase)))
             {
-                throw new FileNotFoundException("WinSweep engine files were not found.", uiScript);
+                return MainWindow.RunSmokeTest(engineRoot) ? 0 : 1;
             }
 
-            var startInfo = new ProcessStartInfo
+            var app = new Application
             {
-                FileName = powerShell,
-                Arguments = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File " + QuoteArgument(uiScript) + (testMode ? " -Test" : string.Empty),
-                WorkingDirectory = engineRoot,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden
+                ShutdownMode = ShutdownMode.OnMainWindowClose
             };
-            startInfo.EnvironmentVariables["WINSWEEP_LAUNCHED_FROM_EXE"] = "1";
-#if PORTABLE
-            startInfo.EnvironmentVariables["WINSWEEP_PORTABLE"] = "1";
-#endif
-
-            using (var process = Process.Start(startInfo))
+            app.DispatcherUnhandledException += (_, eventArgs) =>
             {
-                if (process == null)
-                {
-                    throw new InvalidOperationException("PowerShell could not be started.");
-                }
+                MessageBox.Show(
+                    eventArgs.Exception.Message,
+                    "WinSweep",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                eventArgs.Handled = true;
+            };
 
-                process.WaitForExit();
-                return process.ExitCode;
-            }
+            app.Run(new MainWindow(engineRoot));
+            return 0;
         }
         catch (Exception exception)
         {
             MessageBox.Show(
                 exception.Message,
                 "WinSweep",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
             return 1;
         }
     }
 
-    private static void ExtractPayload(string engineRoot)
+    private static string GetEngineRoot()
     {
-        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadResource))
-        {
-            if (stream == null)
-            {
-                throw new InvalidOperationException("WinSweep payload is missing from the executable.");
-            }
-
-            using (var archive = new ZipArchive(stream, ZipArchiveMode.Read, false))
-            {
-                var root = Path.GetFullPath(engineRoot) + Path.DirectorySeparatorChar;
-                foreach (var entry in archive.Entries)
-                {
-                    var relativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-                    var destination = Path.GetFullPath(Path.Combine(engineRoot, relativePath));
-                    if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidDataException("WinSweep payload contains an unsafe path.");
-                    }
-
-                    if (string.IsNullOrEmpty(entry.Name))
-                    {
-                        Directory.CreateDirectory(destination);
-                        continue;
-                    }
-
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination));
-                    if (string.Equals(entry.Name, "winsweep-config.json", StringComparison.OrdinalIgnoreCase)
-                        && File.Exists(destination))
-                    {
-                        continue;
-                    }
-
-                    entry.ExtractToFile(destination, true);
-                }
-            }
-        }
+#if PORTABLE
+        return Path.Combine(AppContext.BaseDirectory, "WinSweepData");
+#else
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "WinSweep",
+            "Engine");
+#endif
     }
 
-    private static string QuoteArgument(string value)
+    private static void ExtractPayload(string engineRoot)
     {
-        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(PayloadResource)
+            ?? throw new InvalidOperationException("WinSweep payload is missing from the executable.");
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, false);
+
+        var root = Path.GetFullPath(engineRoot) + Path.DirectorySeparatorChar;
+        foreach (var entry in archive.Entries)
+        {
+            var relativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+            var destination = Path.GetFullPath(Path.Combine(engineRoot, relativePath));
+            if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidDataException("WinSweep payload contains an unsafe path.");
+            }
+
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                Directory.CreateDirectory(destination);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            if (string.Equals(entry.Name, "winsweep-config.json", StringComparison.OrdinalIgnoreCase)
+                && File.Exists(destination))
+            {
+                continue;
+            }
+
+            entry.ExtractToFile(destination, true);
+        }
     }
 }
