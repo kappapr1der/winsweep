@@ -12,6 +12,8 @@ param(
     [switch]$Portable,
     [ValidateRange(10, 300)]
     [int]$RequestTimeoutSeconds = 30,
+    [ValidateRange(30, 900)]
+    [int]$BuildTimeoutSeconds = 300,
     [switch]$DryRun
 )
 
@@ -208,6 +210,47 @@ function Invoke-GitHubCurl {
     }
 }
 
+function Invoke-ReleaseBuild {
+    param(
+        [string]$ScriptPath,
+        [string]$BuildVersion,
+        [switch]$BuildPortable
+    )
+
+    $outputPath = [IO.Path]::GetTempFileName()
+    $errorPath = [IO.Path]::GetTempFileName()
+    try {
+        $buildArgs = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath, '-Version', $BuildVersion)
+        if ($BuildPortable) {
+            $buildArgs += '-Portable'
+        }
+
+        $process = Start-Process `
+            -FilePath 'powershell.exe' `
+            -ArgumentList (ConvertTo-ProcessArgumentString $buildArgs) `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $outputPath `
+            -RedirectStandardError $errorPath
+        if (-not $process.WaitForExit($BuildTimeoutSeconds * 1000)) {
+            & taskkill.exe /PID $process.Id /T /F | Out-Null
+            throw "Release build timed out after $BuildTimeoutSeconds seconds. The build process tree was stopped."
+        }
+        $process.WaitForExit()
+
+        $output = [IO.File]::ReadAllText($outputPath, [Text.UTF8Encoding]::new($false)).Trim()
+        $error = [IO.File]::ReadAllText($errorPath, [Text.UTF8Encoding]::new($false)).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($output)) { Write-Host $output }
+        # Windows PowerShell can expose a null ExitCode for a successful .ps1 child.
+        if ($null -ne $process.ExitCode -and $process.ExitCode -ne 0) {
+            throw "Release build failed with exit code $($process.ExitCode). $error"
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Invoke-GitHubJson {
     param(
         [ValidateSet("GET", "POST", "PATCH", "DELETE")]
@@ -308,7 +351,7 @@ if ($SkipTagPush) {
     Write-Host "Note: -SkipTagPush is no longer needed. The GitHub Releases API creates or reuses the tag."
 }
 
-& $buildScript -Version $Version -Portable:$Portable
+Invoke-ReleaseBuild -ScriptPath $buildScript -BuildVersion $Version -BuildPortable:$Portable
 
 if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
     throw "Release zip was not created: $zipPath"

@@ -168,13 +168,6 @@ if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
 $taskPath = "\Codex Windows Cleanup\"
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $powershellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-$settings = New-ScheduledTaskSettingsSet `
-    -Compatibility Win8 `
-    -StartWhenAvailable `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries `
-    -MultipleInstances IgnoreNew `
-    -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
 
 try {
@@ -190,7 +183,8 @@ function Register-CleanupTask {
         [string]$Name,
         [Microsoft.Management.Infrastructure.CimInstance[]]$Trigger,
         [string]$CleanupArgs,
-        [string]$Description
+        [string]$Description,
+        [TimeSpan]$ExecutionTimeLimit
     )
 
     $configArg = ""
@@ -199,6 +193,13 @@ function Register-CleanupTask {
     }
     $actionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" $CleanupArgs$configArg"
     $action = New-ScheduledTaskAction -Execute $powershellPath -Argument $actionArgs
+    $settings = New-ScheduledTaskSettingsSet `
+        -Compatibility Win8 `
+        -StartWhenAvailable `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit $ExecutionTimeLimit
     $task = New-ScheduledTask -Action $action -Trigger $Trigger -Settings $settings -Principal $principal -Description $Description
     Register-ScheduledTask -TaskPath $taskPath -TaskName $Name -InputObject $task -Force | Out-Null
     Write-Host "Registered: $taskPath$Name"
@@ -283,19 +284,22 @@ Register-CleanupTask `
     -Name "Pressure Guard" `
     -Trigger $guardTriggers `
     -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
-    -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low."
+    -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low." `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 Register-CleanupTask `
     -Name "Startup Guard" `
     -Trigger $logonTrigger `
     -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
-    -Description "Checks disk pressure shortly after logon and cleans safe caches only when free space is low."
+    -Description "Checks disk pressure shortly after logon and cleans safe caches only when free space is low." `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 Register-CleanupTask `
     -Name "Deep Weekly" `
     -Trigger $deepTrigger `
     -CleanupArgs "-Deep -AggressiveSafe -TempOlderThanDays 1 -CacheOlderThanDays 0$optionalArgs" `
-    -Description "Weekly deeper cleanup including Windows component cleanup."
+    -Description "Weekly deeper cleanup including Windows component cleanup." `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
 
 Write-Host ""
 Write-Host "Done. Tasks run as: $currentUser"

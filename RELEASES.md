@@ -9,10 +9,10 @@
 Собрать архив локально:
 
 ```powershell
-.\build-release.ps1 -Version 1.0.8 -Portable
+.\build-release.ps1 -Version 1.0.9 -Portable
 ```
 
-Готовый файл появится в `dist\WinSweep-Portable-v1.0.8.zip`. После первого
+Готовый файл появится в `dist\WinSweep-Portable-v1.0.9.zip`. После первого
 запуска `WinSweep.exe` создаст скрытую папку `WinSweepData` рядом с собой.
 В ней находятся настройки и внутренний движок, поэтому всю папку можно
 переносить целиком.
@@ -20,7 +20,7 @@
 Обычная сборка остаётся доступна для совместимости:
 
 ```powershell
-.\build-release.ps1 -Version 1.0.8
+.\build-release.ps1 -Version 1.0.9
 ```
 
 ## Автоматический релиз GitHub Actions
@@ -28,8 +28,8 @@
 GitHub Actions собирает релиз после пуша тега:
 
 ```powershell
-git tag v1.0.8
-git push origin v1.0.8
+git tag v1.0.9
+git push origin v1.0.9
 ```
 
 Это работает, только пока для аккаунта разрешён запуск Actions. При ошибке
@@ -48,19 +48,19 @@ GitHub Actions.
 Затем опубликуй portable-архив:
 
 ```powershell
-.\publish-release.ps1 -Version 1.0.8 -Portable
+.\publish-release.ps1 -Version 1.0.9 -Portable
 ```
 
-Сценарий собирает ZIP, создаёт или использует тег `v1.0.8` и прикрепляет архив
+Сценарий собирает ZIP, создаёт или использует тег `v1.0.9` и прикрепляет архив
 к GitHub Release. Токен сохраняется зашифрованным через DPAPI в
 `%APPDATA%\WinSweep\github-token.txt`, а в репозиторий не попадает.
 
 Полезные варианты:
 
 ```powershell
-.\publish-release.ps1 -Version 1.0.8 -Portable -DryRun
-.\publish-release.ps1 -Version 1.0.8 -Portable -Prerelease
-.\publish-release.ps1 -Version 1.0.8 -Portable -UpdateExisting -ReplaceAsset
+.\publish-release.ps1 -Version 1.0.9 -Portable -DryRun
+.\publish-release.ps1 -Version 1.0.9 -Portable -Prerelease
+.\publish-release.ps1 -Version 1.0.9 -Portable -UpdateExisting -ReplaceAsset
 .\save-github-token.ps1 -Clear
 ```
 

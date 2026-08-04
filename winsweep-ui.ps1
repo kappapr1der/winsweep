@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.0.8"
+$script:WinSweepVersion = "1.0.9"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -25,6 +25,8 @@ $script:ActiveAction = ""
 $script:ActiveRunLogPath = ""
 $script:ActiveRunLineCount = 0
 $script:ActionTimer = $null
+$script:ActiveActionStartedAt = $null
+$script:ActiveActionGuard = $null
 $script:CacheCheckboxes = @{}
 $script:Config = $null
 
@@ -741,6 +743,8 @@ function Complete-WinSweepAction {
     $script:ActiveAction = ''
     $script:ActiveRunLogPath = ''
     $script:ActiveRunLineCount = 0
+    $script:ActiveActionStartedAt = $null
+    $script:ActiveActionGuard = $null
     $result = if ($ExitCode -eq 0) { "Готово: $ActionTitle." } else { "$ActionTitle завершено с кодом $ExitCode. Проверь журнал ниже." }
     Set-ActionState -Running $false -Message $result
     Add-Log $result
@@ -752,6 +756,57 @@ function Complete-WinSweepAction {
     catch {
         Add-Log ("Не удалось обновить состояние дисков: " + $_.Exception.Message)
     }
+}
+
+function Get-WinSweepActionGuard {
+    param(
+        [string]$FileName,
+        [string[]]$ScriptArguments = @()
+    )
+
+    $timeout = New-TimeSpan -Minutes 5
+    if ($FileName -eq 'cleanup-windows.ps1') {
+        $isDeep = ($ScriptArguments -contains '-Deep') -or (([string]::Join(' ', $ScriptArguments)) -match '(?i)(^|\s)-Profile\s+Deep(\s|$)')
+        $timeout = if ($isDeep) { New-TimeSpan -Minutes 45 } else { New-TimeSpan -Minutes 12 }
+    }
+    elseif ($FileName -eq 'space-hog-report.ps1') {
+        $timeout = New-TimeSpan -Minutes 15
+    }
+    elseif ($FileName -eq 'system-maintenance-check.ps1' -and $ScriptArguments -contains '-AnalyzeComponentStore') {
+        $timeout = New-TimeSpan -Minutes 20
+    }
+    elseif ($FileName -eq 'install-scheduled-cleanup.ps1') {
+        $timeout = New-TimeSpan -Minutes 3
+    }
+
+    return [pscustomobject]@{
+        Timeout = $timeout
+        WorkingSetLimitBytes = [int64]1.5GB
+    }
+}
+
+function Stop-WinSweepActionForGuard {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [string]$ActionTitle,
+        [string]$Reason,
+        [switch]$Elevated,
+        [string]$RunLogPath = ''
+    )
+
+    Add-Log "ПРЕДОХРАНИТЕЛЬ: $ActionTitle остановлен. $Reason"
+    try {
+        if (-not $Process.HasExited) {
+            & taskkill.exe /PID $Process.Id /T /F | Out-Null
+            $Process.WaitForExit(5000) | Out-Null
+        }
+    }
+    catch {
+        Add-Log ("Не удалось остановить дерево процесса: " + $_.Exception.Message)
+    }
+
+    Add-WinSweepRunLogLines -Path $RunLogPath
+    Complete-WinSweepAction -ExitCode 124 -ActionTitle $ActionTitle -Elevated:$Elevated
 }
 
 function New-WinSweepRunLogPath {
@@ -783,7 +838,9 @@ function Start-WinSweepProcessMonitor {
         [System.Diagnostics.Process]$Process,
         [string]$ActionTitle,
         [switch]$Elevated,
-        [string]$RunLogPath = ''
+        [string]$RunLogPath = '',
+        [datetime]$StartedAt,
+        $Guard
     )
 
     $timer = New-Object System.Windows.Threading.DispatcherTimer
@@ -794,6 +851,18 @@ function Start-WinSweepProcessMonitor {
             if ($Process.HasExited) {
                 Add-WinSweepRunLogLines -Path $RunLogPath
                 Complete-WinSweepAction -ExitCode $Process.ExitCode -ActionTitle $ActionTitle -Elevated:$Elevated
+                return
+            }
+
+            $Process.Refresh()
+            if (((Get-Date) - $StartedAt) -gt $Guard.Timeout) {
+                Stop-WinSweepActionForGuard -Process $Process -ActionTitle $ActionTitle -Reason ("Превышен лимит времени $([int]$Guard.Timeout.TotalMinutes) мин.") -Elevated:$Elevated -RunLogPath $RunLogPath
+                return
+            }
+
+            if ($Process.WorkingSet64 -gt $Guard.WorkingSetLimitBytes) {
+                $memoryGB = [math]::Round($Process.WorkingSet64 / 1GB, 2)
+                Stop-WinSweepActionForGuard -Process $Process -ActionTitle $ActionTitle -Reason ("Память процесса достигла $memoryGB ГБ.") -Elevated:$Elevated -RunLogPath $RunLogPath
             }
         }
         catch {
@@ -820,6 +889,7 @@ function Start-WinSweepScript {
         return
     }
     $actionTitle = Get-ActionTitle -FileName $FileName
+    $guard = Get-WinSweepActionGuard -FileName $FileName -ScriptArguments $ScriptArguments
     $target = Join-Path $PSScriptRoot $FileName
     if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
         Add-Log "Файл не найден: $target"
@@ -852,13 +922,16 @@ function Start-WinSweepScript {
     )
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(($commandParts -join [Environment]::NewLine)))
     $args = @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',$encodedCommand)
+    $startedAt = Get-Date
+    $script:ActiveActionStartedAt = $startedAt
+    $script:ActiveActionGuard = $guard
     Set-ActionState -Running $true -Message ("Выполняется: $actionTitle. Не закрывай WinSweep.")
     if ($Elevated) {
         try {
             $process = Start-Process -FilePath $script:PowerShellPath -ArgumentList (ConvertTo-ProcessArguments $args) -Verb RunAs -PassThru -ErrorAction Stop
             $script:ActiveProcess = $process
             $script:ActiveAction = $actionTitle
-            Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -Elevated -RunLogPath $runLogPath
+            Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -Elevated -RunLogPath $runLogPath -StartedAt $startedAt -Guard $guard
             Add-Log "Запущено с правами администратора: $FileName. Подтверди UAC, затем прогресс останется здесь."
         }
         catch {
@@ -883,7 +956,7 @@ function Start-WinSweepScript {
         }
         $script:ActiveProcess = $process
         $script:ActiveAction = $actionTitle
-        Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -RunLogPath $runLogPath
+        Start-WinSweepProcessMonitor -Process $process -ActionTitle $actionTitle -RunLogPath $runLogPath -StartedAt $startedAt -Guard $guard
         Add-Log "Запуск: $actionTitle"
     }
     catch {
@@ -976,7 +1049,13 @@ foreach ($entry in $controls.GetEnumerator()) {
 }
 
 if ($Test) {
-    Write-Output ("WINSWEEP_UI_TEST_OK controls={0} caches={1} version={2}" -f $controls.Count, $script:CacheCheckboxes.Count, $script:WinSweepVersion)
+    $safeGuard = Get-WinSweepActionGuard -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile', 'Safe')
+    $deepGuard = Get-WinSweepActionGuard -FileName 'cleanup-windows.ps1' -ScriptArguments @('-Profile', 'Deep')
+    $spaceGuard = Get-WinSweepActionGuard -FileName 'space-hog-report.ps1'
+    if ($safeGuard.Timeout.TotalMinutes -ne 12 -or $deepGuard.Timeout.TotalMinutes -ne 45 -or $spaceGuard.Timeout.TotalMinutes -ne 15 -or $safeGuard.WorkingSetLimitBytes -ne [int64]1.5GB) {
+        throw 'WinSweep action guard test failed.'
+    }
+    Write-Output ("WINSWEEP_UI_TEST_OK controls={0} caches={1} version={2} guardMB={3}" -f $controls.Count, $script:CacheCheckboxes.Count, $script:WinSweepVersion, [math]::Round($safeGuard.WorkingSetLimitBytes / 1MB))
     return
 }
 
