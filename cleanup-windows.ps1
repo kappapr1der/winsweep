@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.1.3"
+$script:WinSweepVersion = "1.2.0"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -60,6 +60,15 @@ $script:ConfigLoadWarning = ""
 $script:ExcludedPaths = @()
 $script:PerDriveThresholds = $null
 $script:LastGuardSnapshot = $null
+$script:SmartGuardTier = ""
+$script:SmartGuardSettings = [pscustomobject]@{
+    StandardFreeGB                = 50
+    EmergencyFreeGB               = 30
+    LightCacheOlderThanDays       = 7
+    StandardCacheOlderThanDays    = 3
+    ActiveSpotifyCacheOlderThanDays = 7
+    NotificationMinimumMB         = 100
+}
 $script:CliParameters = @{}
 foreach ($key in $PSBoundParameters.Keys) {
     $script:CliParameters[$key] = $true
@@ -241,6 +250,28 @@ function Get-PerDriveThreshold {
     return $result
 }
 
+function Set-SmartGuardSettingFromConfig {
+    param(
+        [string]$Name,
+        $Value,
+        [int]$Minimum = 0
+    )
+
+    if ($null -eq $Value) {
+        return
+    }
+
+    try {
+        $parsed = [int]$Value
+        if ($parsed -ge $Minimum) {
+            $script:SmartGuardSettings.$Name = $parsed
+        }
+    }
+    catch {
+        Write-Warning "Ignored invalid automation setting ${Name}: $Value"
+    }
+}
+
 function New-LogFolder {
     param([string]$PreferredLogDir)
 
@@ -317,6 +348,14 @@ if ($null -ne $config) {
     Set-IntFromConfig -Name "CacheOlderThanDays" -Value (Get-ConfigProperty -Object $thresholds -Name "cacheOlderThanDays")
     Set-IntFromConfig -Name "LogRetentionDays" -Value (Get-ConfigProperty -Object $thresholds -Name "logRetentionDays")
     $script:PerDriveThresholds = Get-ConfigProperty -Object $thresholds -Name "perDrive"
+
+    $automation = Get-ConfigProperty -Object $config -Name "automation"
+    Set-SmartGuardSettingFromConfig -Name "StandardFreeGB" -Value (Get-ConfigProperty -Object $automation -Name "standardFreeGB") -Minimum 1
+    Set-SmartGuardSettingFromConfig -Name "EmergencyFreeGB" -Value (Get-ConfigProperty -Object $automation -Name "emergencyFreeGB") -Minimum 1
+    Set-SmartGuardSettingFromConfig -Name "LightCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "lightCacheOlderThanDays") -Minimum 0
+    Set-SmartGuardSettingFromConfig -Name "StandardCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "standardCacheOlderThanDays") -Minimum 0
+    Set-SmartGuardSettingFromConfig -Name "ActiveSpotifyCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "activeSpotifyCacheOlderThanDays") -Minimum 1
+    Set-SmartGuardSettingFromConfig -Name "NotificationMinimumMB" -Value (Get-ConfigProperty -Object $automation -Name "notificationMinimumMB") -Minimum 0
 
     $features = Get-ConfigProperty -Object $config -Name "features"
     Set-SwitchFromConfig -Name "AggressiveSafe" -Value (Get-ConfigProperty -Object $features -Name "aggressiveSafe")
@@ -1014,6 +1053,39 @@ function Test-ShouldRunSmartGuard {
     return $false
 }
 
+function Set-SmartGuardTier {
+    param($Snapshot)
+
+    if ($null -eq $Snapshot) {
+        return
+    }
+
+    $freeGB = [Math]::Round($Snapshot.FreeBytes / 1GB, 2)
+    $tier = "light"
+    $effectiveTempDays = [Math]::Max($TempOlderThanDays, 1)
+    $effectiveCacheDays = [Math]::Max($CacheOlderThanDays, $script:SmartGuardSettings.LightCacheOlderThanDays)
+    if ($freeGB -lt $script:SmartGuardSettings.EmergencyFreeGB) {
+        $tier = "emergency"
+        $effectiveTempDays = 0
+        $effectiveCacheDays = 0
+    }
+    elseif ($freeGB -lt $script:SmartGuardSettings.StandardFreeGB) {
+        $tier = "standard"
+        $effectiveTempDays = [Math]::Max($TempOlderThanDays, 1)
+        $effectiveCacheDays = [Math]::Max($CacheOlderThanDays, $script:SmartGuardSettings.StandardCacheOlderThanDays)
+    }
+
+    Set-Variable -Name "TempOlderThanDays" -Value $effectiveTempDays -Scope Script
+    Set-Variable -Name "CacheOlderThanDays" -Value $effectiveCacheDays -Scope Script
+    $script:SmartGuardTier = $tier
+    Write-Log "Smart guard tier: $tier. $($Snapshot.Drive) has $freeGB GB free; temp age=$effectiveTempDays day(s), cache age=$effectiveCacheDays day(s)."
+    Write-Panel -Title "Pressure policy" -Lines @(
+        ("tier: $tier"),
+        ("temp: older than $effectiveTempDays day(s)"),
+        ("cache: older than $effectiveCacheDays day(s)")
+    )
+}
+
 function Get-NotificationLabel {
     param([string]$Label)
 
@@ -1042,6 +1114,12 @@ function Show-CleanupNotification {
     param($After)
 
     if (-not $NotifyOnPressure -or $Quiet) {
+        return
+    }
+
+    $minimumBytes = [int64]$script:SmartGuardSettings.NotificationMinimumMB * 1MB
+    if ($script:DeletedBytes -lt $minimumBytes) {
+        Write-Log "Skipped cleanup notification: reclaimed less than $($script:SmartGuardSettings.NotificationMinimumMB) MB." -Detail
         return
     }
 
@@ -1312,17 +1390,27 @@ function Get-RunningProcessNames {
     return @($running | Sort-Object -Unique)
 }
 
-function Test-BrowserCacheCleanupAllowed {
-    $running = @(Get-RunningProcessNames -Processes @("chrome", "msedge", "brave", "firefox"))
+function Test-AppCacheCleanupAllowed {
+    param(
+        [string]$App,
+        [string[]]$Processes,
+        [string]$ResultLabel
+    )
+
+    $running = @(Get-RunningProcessNames -Processes $Processes)
     if ($running.Count -eq 0) {
         return $true
     }
 
     $processList = $running -join ", "
-    Write-Log "Skipped browser cache cleanup because browser processes are open: $processList."
-    $script:CloseHints["Browser cache skipped because it is open: $processList."] = $true
-    Add-CleanupResult -Label "browser cache" -Path "open processes: $processList" -Days $CacheOlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "app open"
+    Write-Log "Skipped $App cache cleanup because the application is open: $processList."
+    $script:CloseHints["$App cache skipped because it is open: $processList."] = $true
+    Add-CleanupResult -Label $ResultLabel -Path "open processes: $processList" -Days $CacheOlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "app open"
     return $false
+}
+
+function Test-BrowserCacheCleanupAllowed {
+    return (Test-AppCacheCleanupAllowed -App "browser" -Processes @("chrome", "msedge", "brave", "firefox") -ResultLabel "browser cache")
 }
 
 function Add-WildcardTargets {
@@ -1347,23 +1435,11 @@ function Add-WildcardTargets {
     }
 }
 
-function Add-SpotifyCacheTargets {
+function Add-SpotifyConfiguredStorageTargets {
     param(
         [System.Collections.ArrayList]$Targets,
         [int]$Days
     )
-
-    Add-Target -Targets $Targets -Label "Spotify stream cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Data") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify storage cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Storage") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify browser cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify code cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Code Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify roaming browser cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify roaming code cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Code Cache") -Days $Days
-    Add-WildcardTargets -Targets $Targets -Label "Spotify user cache" -Pattern (Join-Path $env:APPDATA "Spotify\Users\*\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store stream cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Data") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store storage cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Storage") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store browser cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store code cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Code Cache") -Days $Days
 
     $prefFiles = @(
         (Join-Path $env:APPDATA "Spotify\prefs"),
@@ -1391,6 +1467,41 @@ function Add-SpotifyCacheTargets {
             Write-Log "Could not read Spotify prefs: $prefFile. $($_.Exception.Message)" "WARN"
         }
     }
+}
+
+function Add-SpotifyCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    $running = @(Get-RunningProcessNames -Processes @("Spotify"))
+    $streamDays = $Days
+    if ($running.Count -gt 0) {
+        $streamDays = [Math]::Max($Days, $script:SmartGuardSettings.ActiveSpotifyCacheOlderThanDays)
+        $processList = $running -join ", "
+        Write-Log "Spotify is open: only music cache older than $streamDays day(s) will be cleaned; active browser and code caches are deferred."
+        $script:CloseHints["Spotify is open: browser/code cache deferred; stale music cache older than $streamDays days is still eligible."] = $true
+        Add-CleanupResult -Label "Spotify active browser cache" -Path "open processes: $processList" -Days $streamDays -Bytes 0 -Items 0 -Failures 0 -Status "app open"
+    }
+
+    Add-Target -Targets $Targets -Label "Spotify stream cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Data") -Days $streamDays
+    Add-Target -Targets $Targets -Label "Spotify storage cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Storage") -Days $streamDays
+    Add-Target -Targets $Targets -Label "Spotify Store stream cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Data") -Days $streamDays
+    Add-Target -Targets $Targets -Label "Spotify Store storage cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Storage") -Days $streamDays
+    Add-SpotifyConfiguredStorageTargets -Targets $Targets -Days $streamDays
+
+    if ($running.Count -gt 0) {
+        return
+    }
+
+    Add-Target -Targets $Targets -Label "Spotify browser cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Spotify code cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Spotify roaming browser cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Spotify roaming code cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Code Cache") -Days $Days
+    Add-WildcardTargets -Targets $Targets -Label "Spotify user cache" -Pattern (Join-Path $env:APPDATA "Spotify\Users\*\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Spotify Store browser cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Spotify Store code cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Code Cache") -Days $Days
 }
 
 function Add-DiscordCacheTargets {
@@ -1448,6 +1559,19 @@ function Add-TeamsCacheTargets {
     Add-WildcardTargets -Targets $Targets -Label "new Teams package cache" -Pattern (Join-Path $env:LOCALAPPDATA "Packages\MSTeams_*\LocalCache\Microsoft\MSTeams\Cache") -Days $Days
 }
 
+function Add-RazerCacheTargets {
+    param(
+        [System.Collections.ArrayList]$Targets,
+        [int]$Days
+    )
+
+    Add-Target -Targets $Targets -Label "Razer app cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app code cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Code Cache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app GPU cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\GPUCache") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app service worker cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Service Worker\CacheStorage") -Days $Days
+    Add-Target -Targets $Targets -Label "Razer app logs" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Logs") -Days $Days
+}
+
 function Add-AppCacheTargets {
     param(
         [System.Collections.ArrayList]$Targets,
@@ -1455,16 +1579,24 @@ function Add-AppCacheTargets {
     )
 
     Add-SpotifyCacheTargets -Targets $Targets -Days $Days
-    Add-DiscordCacheTargets -Targets $Targets -Days $Days
-    Add-SlackCacheTargets -Targets $Targets -Days $Days
-    Add-TelegramCacheTargets -Targets $Targets -Days $Days
-    Add-ZoomCacheTargets -Targets $Targets -Days $Days
-    Add-TeamsCacheTargets -Targets $Targets -Days $Days
-    Add-Target -Targets $Targets -Label "Razer app cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Razer app code cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Code Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Razer app GPU cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\GPUCache") -Days $Days
-    Add-Target -Targets $Targets -Label "Razer app service worker cache" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Default\Service Worker\CacheStorage") -Days $Days
-    Add-Target -Targets $Targets -Label "Razer app logs" -Path (Join-Path $env:LOCALAPPDATA "Razer\RazerAppEngine\User Data\Logs") -Days $Days
+    if (Test-AppCacheCleanupAllowed -App "Discord" -Processes @("Discord") -ResultLabel "Discord cache") {
+        Add-DiscordCacheTargets -Targets $Targets -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Slack" -Processes @("Slack") -ResultLabel "Slack cache") {
+        Add-SlackCacheTargets -Targets $Targets -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Telegram Desktop" -Processes @("Telegram") -ResultLabel "Telegram Desktop cache") {
+        Add-TelegramCacheTargets -Targets $Targets -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Zoom" -Processes @("Zoom") -ResultLabel "Zoom cache") {
+        Add-ZoomCacheTargets -Targets $Targets -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Microsoft Teams" -Processes @("Teams", "ms-teams") -ResultLabel "Microsoft Teams cache") {
+        Add-TeamsCacheTargets -Targets $Targets -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Razer" -Processes @("RazerAppEngine", "RazerCentral", "razerwdl") -ResultLabel "Razer app cache") {
+        Add-RazerCacheTargets -Targets $Targets -Days $Days
+    }
 }
 
 function Add-SystemCacheTargets {
@@ -1507,22 +1639,36 @@ function Add-GameCacheTargets {
     )
 
     $programFilesX86 = ${env:ProgramFiles(x86)}
-    if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
+    if (-not [string]::IsNullOrWhiteSpace($programFilesX86) -and (Test-AppCacheCleanupAllowed -App "Steam" -Processes @("steam", "steamwebhelper") -ResultLabel "Steam cache")) {
         Add-Target -Targets $Targets -Label "Steam http cache" -Path (Join-Path $programFilesX86 "Steam\appcache\httpcache") -Days $Days
         Add-Target -Targets $Targets -Label "Steam shader cache" -Path (Join-Path $programFilesX86 "Steam\steamapps\shadercache") -Days $Days
     }
 
-    Add-WildcardTargets -Targets $Targets -Label "Epic Games Launcher webcache" -Pattern (Join-Path $env:LOCALAPPDATA "EpicGamesLauncher\Saved\webcache*") -Days $Days
-    Add-Target -Targets $Targets -Label "Battle.net cache" -Path (Join-Path $env:ProgramData "Battle.net\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Battle.net local cache" -Path (Join-Path $env:LOCALAPPDATA "Battle.net\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "EA Desktop cache" -Path (Join-Path $env:LOCALAPPDATA "Electronic Arts\EA Desktop\cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Battlefield game data cache" -Path (Join-Path $env:LOCALAPPDATA "BattlefieldGameData.kin-release.Win32\cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Ubisoft Connect cache" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Ubisoft Connect logs" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\logs") -Days $Days
-    Add-Target -Targets $Targets -Label "Riot Client cache" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Data\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Riot Client logs" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Logs") -Days $Days
-    Add-Target -Targets $Targets -Label "Rockstar Launcher cache" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Rockstar Launcher logs" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Logs") -Days $Days
+    if (Test-AppCacheCleanupAllowed -App "Epic Games Launcher" -Processes @("EpicGamesLauncher", "EpicWebHelper") -ResultLabel "Epic Games Launcher cache") {
+        Add-WildcardTargets -Targets $Targets -Label "Epic Games Launcher webcache" -Pattern (Join-Path $env:LOCALAPPDATA "EpicGamesLauncher\Saved\webcache*") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Battle.net" -Processes @("Battle.net", "Agent") -ResultLabel "Battle.net cache") {
+        Add-Target -Targets $Targets -Label "Battle.net cache" -Path (Join-Path $env:ProgramData "Battle.net\Cache") -Days $Days
+        Add-Target -Targets $Targets -Label "Battle.net local cache" -Path (Join-Path $env:LOCALAPPDATA "Battle.net\Cache") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "EA Desktop" -Processes @("EADesktop", "EABackgroundService") -ResultLabel "EA Desktop cache") {
+        Add-Target -Targets $Targets -Label "EA Desktop cache" -Path (Join-Path $env:LOCALAPPDATA "Electronic Arts\EA Desktop\cache") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Battlefield" -Processes @("bf2042", "bf1", "bfv") -ResultLabel "Battlefield game data cache") {
+        Add-Target -Targets $Targets -Label "Battlefield game data cache" -Path (Join-Path $env:LOCALAPPDATA "BattlefieldGameData.kin-release.Win32\cache") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Ubisoft Connect" -Processes @("UbisoftConnect", "upc") -ResultLabel "Ubisoft Connect cache") {
+        Add-Target -Targets $Targets -Label "Ubisoft Connect cache" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\cache") -Days $Days
+        Add-Target -Targets $Targets -Label "Ubisoft Connect logs" -Path (Join-Path $env:LOCALAPPDATA "Ubisoft Game Launcher\logs") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Riot Client" -Processes @("RiotClientServices", "RiotClientUx", "RiotClientUxRender") -ResultLabel "Riot Client cache") {
+        Add-Target -Targets $Targets -Label "Riot Client cache" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Data\Cache") -Days $Days
+        Add-Target -Targets $Targets -Label "Riot Client logs" -Path (Join-Path $env:LOCALAPPDATA "Riot Games\Riot Client\Logs") -Days $Days
+    }
+    if (Test-AppCacheCleanupAllowed -App "Rockstar Launcher" -Processes @("RockstarService", "Launcher") -ResultLabel "Rockstar Launcher cache") {
+        Add-Target -Targets $Targets -Label "Rockstar Launcher cache" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Cache") -Days $Days
+        Add-Target -Targets $Targets -Label "Rockstar Launcher logs" -Path (Join-Path $env:LOCALAPPDATA "Rockstar Games\Launcher\Logs") -Days $Days
+    }
 }
 
 function Add-ExtraPathTargets {
@@ -1827,6 +1973,10 @@ if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumF
     exit 0
 }
 
+if ($SmartGuard) {
+    Set-SmartGuardTier -Snapshot $script:LastGuardSnapshot
+}
+
 $startSnapshot = Get-DriveSnapshot -Drive $GuardDrive
 
 Invoke-PreflightCheck
@@ -1860,19 +2010,29 @@ if ($CleanAppCaches) {
 }
 else {
     if ($CleanDiscordCache) {
-        Add-DiscordCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        if (Test-AppCacheCleanupAllowed -App "Discord" -Processes @("Discord") -ResultLabel "Discord cache") {
+            Add-DiscordCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        }
     }
     if ($CleanTelegramCache) {
-        Add-TelegramCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        if (Test-AppCacheCleanupAllowed -App "Telegram Desktop" -Processes @("Telegram") -ResultLabel "Telegram Desktop cache") {
+            Add-TelegramCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        }
     }
     if ($CleanSlackCache) {
-        Add-SlackCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        if (Test-AppCacheCleanupAllowed -App "Slack" -Processes @("Slack") -ResultLabel "Slack cache") {
+            Add-SlackCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        }
     }
     if ($CleanTeamsCache) {
-        Add-TeamsCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        if (Test-AppCacheCleanupAllowed -App "Microsoft Teams" -Processes @("Teams", "ms-teams") -ResultLabel "Microsoft Teams cache") {
+            Add-TeamsCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        }
     }
     if ($CleanZoomCache) {
-        Add-ZoomCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        if (Test-AppCacheCleanupAllowed -App "Zoom" -Processes @("Zoom") -ResultLabel "Zoom cache") {
+            Add-ZoomCacheTargets -Targets $targets -Days $CacheOlderThanDays
+        }
     }
 }
 

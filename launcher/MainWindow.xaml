@@ -53,6 +53,8 @@
                 <TextBlock Text="Control Center · чисто, прозрачно, под контролем" FontSize="14" Foreground="#5A6B72" Margin="0,4,0,0" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="CheckForUpdatesButton" Content="Проверить обновление" Style="{StaticResource SecondaryButton}" Click="CheckForUpdatesButton_Click" />
+                <Button x:Name="OpenLatestReleaseButton" Content="Открыть релиз" Style="{StaticResource SecondaryButton}" IsEnabled="False" Click="OpenLatestReleaseButton_Click" />
                 <Button x:Name="RefreshButton" Content="Обновить" Style="{StaticResource SecondaryButton}" Click="RefreshButton_Click" />
                 <Button x:Name="OpenFolderButton" Content="Открыть папку" Style="{StaticResource SecondaryButton}" Click="OpenFolderButton_Click" />
             </StackPanel>
@@ -85,6 +87,7 @@
                             <TextBlock Text="Автозащита" FontSize="16" FontWeight="SemiBold" Foreground="#172B32" />
                             <TextBlock x:Name="ProtectionText" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,7,0,0" />
                             <TextBlock x:Name="OverviewText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,12,0,0" />
+                            <TextBlock x:Name="AutomationText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,7,0,0" />
                             <TextBlock x:Name="LastRunText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,8,0,0" />
                             <TextBlock x:Name="ActivitySummaryText" Text="Готово к запуску действия." TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#147D78" Margin="0,10,0,0" />
                         </StackPanel>
@@ -137,16 +140,22 @@
             </TabItem>
 
             <TabItem Header="Отчёты и история">
-                <StackPanel Margin="18">
-                    <TextBlock Text="Отчёты" FontSize="20" FontWeight="SemiBold" Foreground="#172B32" />
-                    <TextBlock Text="Все отчёты остаются локальными." Foreground="#5A6B72" Margin="0,8,0,18" />
-                    <WrapPanel>
-                        <Button x:Name="SpaceReportButton" Content="Диагностика места" Click="SpaceReportButton_Click" />
-                        <Button x:Name="OpenLatestReportButton" Content="Открыть последний HTML" Style="{StaticResource SecondaryButton}" Click="OpenLatestReportButton_Click" />
-                        <Button x:Name="ShowHistoryButton" Content="Показать историю" Style="{StaticResource SecondaryButton}" Click="ShowHistoryButton_Click" />
-                        <Button x:Name="OpenLogsButton" Content="Открыть логи" Style="{StaticResource SecondaryButton}" Click="OpenLogsButton_Click" />
-                    </WrapPanel>
-                </StackPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="18">
+                        <TextBlock Text="Отчёты" FontSize="20" FontWeight="SemiBold" Foreground="#172B32" />
+                        <TextBlock Text="Все отчёты остаются локальными." Foreground="#5A6B72" Margin="0,8,0,18" />
+                        <TextBlock Text="Динамика очистки" FontSize="16" FontWeight="SemiBold" Foreground="#172B32" />
+                        <TextBlock x:Name="HistorySummaryText" Text="История загрузится после первого запуска." TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,7,0,0" />
+                        <StackPanel x:Name="HistoryBarsPanel" Orientation="Horizontal" Height="92" Margin="0,8,0,2" VerticalAlignment="Bottom" />
+                        <TextBlock x:Name="HistoryCategoriesText" TextWrapping="Wrap" Foreground="#5A6B72" Margin="0,4,0,16" />
+                        <WrapPanel>
+                            <Button x:Name="SpaceReportButton" Content="Диагностика места" Click="SpaceReportButton_Click" />
+                            <Button x:Name="OpenLatestReportButton" Content="Открыть последний HTML" Style="{StaticResource SecondaryButton}" Click="OpenLatestReportButton_Click" />
+                            <Button x:Name="ShowHistoryButton" Content="Показать историю" Style="{StaticResource SecondaryButton}" Click="ShowHistoryButton_Click" />
+                            <Button x:Name="OpenLogsButton" Content="Открыть логи" Style="{StaticResource SecondaryButton}" Click="OpenLogsButton_Click" />
+                        </WrapPanel>
+                    </StackPanel>
+                </ScrollViewer>
             </TabItem>
         </TabControl>
 

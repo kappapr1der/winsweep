@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.1.3"
+$script:WinSweepVersion = "1.2.0"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -368,7 +368,7 @@ function Refresh-CacheControls {
     $cachePanel.Children.Clear()
     $script:CacheCheckboxes = @{}
     $labels = [ordered]@{
-        spotifyCache = 'Spotify'
+        spotifyCache = 'Spotify (бережно при запуске)'
         discordCache = 'Discord'
         telegramCache = 'Telegram Desktop'
         slackCache = 'Slack'

@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,8 +18,9 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.1.3";
+    private const string Version = "1.2.0";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
+    private static readonly HttpClient UpdateClient = new() { Timeout = TimeSpan.FromSeconds(8) };
 
     private readonly string _engineRoot;
     private readonly string _configPath;
@@ -32,6 +35,7 @@ public partial class MainWindow : Window
     private DateTime _activeStartedAt;
     private string? _activeTitle;
     private string? _activeRunLogPath;
+    private string? _latestReleaseUrl;
     private int _runLogReadChars;
 
     public MainWindow(string engineRoot)
@@ -178,6 +182,7 @@ public partial class MainWindow : Window
             RefreshCacheControls();
             RefreshSummary();
             RefreshSystemSummary();
+            RefreshHistorySummary();
             if (showLog)
             {
                 AppendLog("Данные обновлены.");
@@ -239,7 +244,7 @@ public partial class MainWindow : Window
         var features = GetObject(_config, "features");
         var labels = new (string Key, string Label)[]
         {
-            ("spotifyCache", "Spotify"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
+            ("spotifyCache", "Spotify (бережно при запуске)"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
             ("slackCache", "Slack"), ("teamsCache", "Microsoft Teams"), ("zoomCache", "Zoom"),
             ("browserCaches", "Браузеры (только когда закрыты)"), ("developerCaches", "Инструменты разработки"),
             ("gameCaches", "Игровые лаунчеры"), ("notifyOnPressure", "Уведомления с итогом очистки")
@@ -289,6 +294,12 @@ public partial class MainWindow : Window
 
         var enabled = _cacheCheckboxes.Values.Count(checkBox => checkBox.IsChecked == true);
         OverviewText.Text = $"Профиль: {GetString(_config, "defaultProfile", "Safe")}. Включено переключателей: {enabled}. Все операции выполняются в отдельном контролируемом процессе.";
+        var automation = GetObject(_config, "automation");
+        var standardFreeGb = GetInt(automation, "standardFreeGB", 50);
+        var emergencyFreeGb = GetInt(automation, "emergencyFreeGB", 30);
+        var lightAge = GetInt(automation, "lightCacheOlderThanDays", 7);
+        var standardAge = GetInt(automation, "standardCacheOlderThanDays", 3);
+        AutomationText.Text = $"Автополитика: до {standardFreeGb} ГБ - кэш старше {lightAge} дн.; до {emergencyFreeGb} ГБ - старше {standardAge} дн.; ниже {emergencyFreeGb} ГБ - экстренный режим.";
         ScheduleText.Text = $"Pressure Guard: каждые {GetInt(schedule, "guardEveryHours", 3)} ч. с {GetString(schedule, "guardStart", "00:15")}. Deep Weekly: {GetString(schedule, "deepDay", "Sunday")} в {GetString(schedule, "deepWeekly", "03:20")}.";
         LastRunText.Text = GetLatestCleanupText();
     }
@@ -334,7 +345,7 @@ public partial class MainWindow : Window
                 return $"Последний журнал: {latest.LastWriteTime:dd.MM HH:mm}.";
             }
 
-            var match = Regex.Match(finish, @"Removed (?<items>\d+) item\(s\), reclaimed about (?<size>[^,]+), blocked: (?<blocked>\d+), errors: (?<errors>\d+)\.", RegexOptions.IgnoreCase);
+            var match = Regex.Match(finish, @"Removed (?<items>\d+) item\(s\), reclaimed about (?<size>[\d.,]+\s+(?:GB|MB|KB|bytes)), blocked: (?<blocked>\d+), errors: (?<errors>\d+)\.", RegexOptions.IgnoreCase);
             if (!match.Success)
             {
                 return $"Последняя очистка: {latest.LastWriteTime:dd.MM HH:mm}.";
@@ -355,6 +366,132 @@ public partial class MainWindow : Window
         {
             return $"Последний журнал: {latest.LastWriteTime:dd.MM HH:mm}.";
         }
+    }
+
+    private void RefreshHistorySummary()
+    {
+        HistoryBarsPanel.Children.Clear();
+        var now = DateTime.Today;
+        var history = ReadCleanupHistory()
+            .Where(entry => entry.Time.Date >= now.AddDays(-29))
+            .ToArray();
+        var lastSevenDays = history.Where(entry => entry.Time.Date >= now.AddDays(-6)).ToArray();
+        var totalSeven = lastSevenDays.Sum(entry => entry.ReclaimedBytes);
+        var totalThirty = history.Sum(entry => entry.ReclaimedBytes);
+        if (history.Length == 0)
+        {
+            HistorySummaryText.Text = "За последние 30 дней завершённых очисток пока нет.";
+            HistoryCategoriesText.Text = string.Empty;
+            return;
+        }
+
+        HistorySummaryText.Text = $"За 7 дней: {FormatBytes(totalSeven)} за {lastSevenDays.Length} запуск(ов). За 30 дней: {FormatBytes(totalThirty)} за {history.Length} запуск(ов).";
+        var days = Enumerable.Range(0, 7)
+            .Select(offset => now.AddDays(-6 + offset))
+            .Select(day => new HistoryDay(day, lastSevenDays.Where(entry => entry.Time.Date == day).Sum(entry => entry.ReclaimedBytes)))
+            .ToArray();
+        var maximum = Math.Max(1, days.Max(day => day.ReclaimedBytes));
+        foreach (var day in days)
+        {
+            var cell = new Grid { Width = 52, Height = 92, Margin = new Thickness(0, 0, 5, 0) };
+            var barHeight = day.ReclaimedBytes == 0 ? 3 : Math.Max(6, Math.Round(day.ReclaimedBytes * 64d / maximum));
+            var bar = new Border
+            {
+                Width = 30,
+                Height = barHeight,
+                Background = BrushFrom(day.ReclaimedBytes == 0 ? "#D3DEE1" : "#147D78"),
+                VerticalAlignment = VerticalAlignment.Bottom,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 20),
+                ToolTip = $"{day.Date:dd.MM}: {FormatBytes(day.ReclaimedBytes)}"
+            };
+            var label = new TextBlock
+            {
+                Text = day.Date.ToString("dd.MM"),
+                FontSize = 11,
+                Foreground = BrushFrom("#5A6B72"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Bottom
+            };
+            cell.Children.Add(bar);
+            cell.Children.Add(label);
+            HistoryBarsPanel.Children.Add(cell);
+        }
+
+        var categories = history
+            .SelectMany(entry => entry.Categories)
+            .GroupBy(category => category.Label, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new HistoryCategory(group.Key, group.Sum(item => item.ReclaimedBytes)))
+            .OrderByDescending(category => category.ReclaimedBytes)
+            .Take(3)
+            .Select(category => $"{category.Label}: {FormatBytes(category.ReclaimedBytes)}")
+            .ToArray();
+        HistoryCategoriesText.Text = categories.Length == 0
+            ? "Крупных категорий в истории пока нет."
+            : "Больше всего освобождалось: " + string.Join(", ", categories) + ".";
+    }
+
+    private IEnumerable<CleanupHistoryEntry> ReadCleanupHistory()
+    {
+        var logRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "CodexWindowsCleanup", "Logs");
+        if (!Directory.Exists(logRoot))
+        {
+            yield break;
+        }
+
+        foreach (var log in new DirectoryInfo(logRoot).GetFiles("cleanup-*.log").OrderByDescending(file => file.LastWriteTime).Take(180))
+        {
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(log.FullName, Encoding.UTF8);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var finish = lines.LastOrDefault(line => line.Contains("Windows cleanup finished", StringComparison.OrdinalIgnoreCase));
+            var summary = finish is null
+                ? Match.Empty
+                : Regex.Match(finish, @"reclaimed about (?<size>[\d.,]+\s+(?:GB|MB|KB|bytes)), blocked", RegexOptions.IgnoreCase);
+            if (!summary.Success)
+            {
+                continue;
+            }
+
+            var categories = lines
+                .Select(line => Regex.Match(line, @"Cleaned (?<label>.+): \d+ item\(s\), about (?<size>[\d.,]+\s+(?:GB|MB|KB|bytes))\.", RegexOptions.IgnoreCase))
+                .Where(match => match.Success)
+                .Select(match => new HistoryCategory(match.Groups["label"].Value, ParseByteSize(match.Groups["size"].Value)))
+                .Where(category => category.ReclaimedBytes > 0)
+                .ToArray();
+            yield return new CleanupHistoryEntry(log.LastWriteTime, ParseByteSize(summary.Groups["size"].Value), categories);
+        }
+    }
+
+    private static long ParseByteSize(string text)
+    {
+        var match = Regex.Match(text, @"(?<amount>[\d.,]+)\s*(?<unit>GB|MB|KB|bytes)", RegexOptions.IgnoreCase);
+        if (!match.Success)
+        {
+            return 0;
+        }
+
+        var normalized = match.Groups["amount"].Value.Replace(',', '.');
+        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var amount))
+        {
+            return 0;
+        }
+
+        var multiplier = match.Groups["unit"].Value.ToUpperInvariant() switch
+        {
+            "GB" => 1L << 30,
+            "MB" => 1L << 20,
+            "KB" => 1L << 10,
+            _ => 1L
+        };
+        return (long)Math.Max(0, amount * multiplier);
     }
 
     private void StartAction(string title, string fileName, bool elevated = false, params string[] arguments)
@@ -635,6 +772,64 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void CheckForUpdatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        CheckForUpdatesButton.IsEnabled = false;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/kappapr1der/winsweep/releases/latest");
+            request.Headers.TryAddWithoutValidation("User-Agent", "WinSweep-Control-Center");
+            using var response = await UpdateClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            var release = JsonNode.Parse(await response.Content.ReadAsStringAsync()) as JsonObject
+                ?? throw new InvalidDataException("GitHub returned an invalid release response.");
+            var tag = release["tag_name"]?.GetValue<string>()?.Trim() ?? string.Empty;
+            var url = release["html_url"]?.GetValue<string>()?.Trim() ?? string.Empty;
+            if (IsNewerRelease(tag))
+            {
+                _latestReleaseUrl = url;
+                OpenLatestReleaseButton.IsEnabled = !string.IsNullOrWhiteSpace(_latestReleaseUrl);
+                ActivitySummaryText.Text = $"Доступно обновление {tag}. Открой релиз, чтобы скачать portable-версию.";
+                ActivitySummaryText.Foreground = BrushFrom("#147D78");
+                AppendLog("Доступно обновление: " + tag);
+            }
+            else
+            {
+                _latestReleaseUrl = string.Empty;
+                OpenLatestReleaseButton.IsEnabled = false;
+                ActivitySummaryText.Text = $"Установлена актуальная версия v{Version}.";
+                ActivitySummaryText.Foreground = BrushFrom("#147D78");
+                AppendLog("Проверка обновлений: установлена актуальная версия.");
+            }
+        }
+        catch (Exception exception)
+        {
+            ActivitySummaryText.Text = "Не удалось проверить обновление. Проверь подключение к GitHub.";
+            ActivitySummaryText.Foreground = BrushFrom("#C47A22");
+            AppendLog("ОШИБКА проверки обновлений: " + exception.Message);
+        }
+        finally
+        {
+            CheckForUpdatesButton.IsEnabled = true;
+        }
+    }
+
+    private void OpenLatestReleaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_latestReleaseUrl))
+        {
+            OpenExternalPath(_latestReleaseUrl);
+        }
+    }
+
+    private static bool IsNewerRelease(string tag)
+    {
+        var candidate = tag.Trim().TrimStart('v', 'V');
+        return System.Version.TryParse(candidate, out var latest)
+            && System.Version.TryParse(Version, out var installed)
+            && latest > installed;
+    }
+
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (_activeProcess is { HasExited: false })
@@ -676,6 +871,9 @@ public partial class MainWindow : Window
     private static Brush BrushFrom(string color) => (Brush)new BrushConverter().ConvertFromString(color)!;
 
     private sealed record ActionGuard(TimeSpan Timeout);
+    private sealed record HistoryDay(DateTime Date, long ReclaimedBytes);
+    private sealed record HistoryCategory(string Label, long ReclaimedBytes);
+    private sealed record CleanupHistoryEntry(DateTime Time, long ReclaimedBytes, IReadOnlyList<HistoryCategory> Categories);
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e) => RefreshAll();
     private void OpenFolderButton_Click(object sender, RoutedEventArgs e) => OpenExternalPath(_engineRoot);
