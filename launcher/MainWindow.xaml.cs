@@ -16,7 +16,7 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.1.2";
+    private const string Version = "1.1.3";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
 
     private readonly string _engineRoot;
@@ -241,7 +241,7 @@ public partial class MainWindow : Window
         {
             ("spotifyCache", "Spotify"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
             ("slackCache", "Slack"), ("teamsCache", "Microsoft Teams"), ("zoomCache", "Zoom"),
-            ("browserCaches", "Браузеры"), ("developerCaches", "Инструменты разработки"),
+            ("browserCaches", "Браузеры (только когда закрыты)"), ("developerCaches", "Инструменты разработки"),
             ("gameCaches", "Игровые лаунчеры"), ("notifyOnPressure", "Уведомления с итогом очистки")
         };
 

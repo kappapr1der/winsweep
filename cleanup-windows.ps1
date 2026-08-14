@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.1.2"
+$script:WinSweepVersion = "1.1.3"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -682,15 +682,7 @@ function Add-PreflightResult {
         [string]$Reason
     )
 
-    $running = @()
-    foreach ($processName in $Processes) {
-        $found = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
-        foreach ($process in $found) {
-            $running += $process.ProcessName
-        }
-    }
-
-    $running = @($running | Sort-Object -Unique)
+    $running = @(Get-RunningProcessNames -Processes $Processes)
     if ($running.Count -eq 0) {
         return
     }
@@ -725,7 +717,7 @@ function Invoke-PreflightCheck {
         Add-PreflightResult -App "Microsoft Teams" -Processes @("Teams", "ms-teams") -Reason "Teams cache may stay locked."
     }
     if ($CleanBrowserCaches -or $AggressiveSafe) {
-        Add-PreflightResult -App "browsers" -Processes @("chrome", "msedge", "brave", "firefox") -Reason "Browser cache cleanup is cleaner when browsers are closed."
+        Add-PreflightResult -App "browsers" -Processes @("chrome", "msedge", "brave", "firefox") -Reason "Browser cache cleanup is skipped while a supported browser is open."
     }
     if ($CleanGameCaches -or $AggressiveSafe) {
         Add-PreflightResult -App "Steam" -Processes @("steam", "steamwebhelper") -Reason "Steam shader/http cache may be active."
@@ -1309,6 +1301,30 @@ function Add-Target {
     })
 }
 
+function Get-RunningProcessNames {
+    param([string[]]$Processes)
+
+    $running = @()
+    foreach ($processName in $Processes) {
+        $running += @(Get-Process -Name $processName -ErrorAction SilentlyContinue | ForEach-Object { $_.ProcessName })
+    }
+
+    return @($running | Sort-Object -Unique)
+}
+
+function Test-BrowserCacheCleanupAllowed {
+    $running = @(Get-RunningProcessNames -Processes @("chrome", "msedge", "brave", "firefox"))
+    if ($running.Count -eq 0) {
+        return $true
+    }
+
+    $processList = $running -join ", "
+    Write-Log "Skipped browser cache cleanup because browser processes are open: $processList."
+    $script:CloseHints["Browser cache skipped because it is open: $processList."] = $true
+    Add-CleanupResult -Label "browser cache" -Path "open processes: $processList" -Days $CacheOlderThanDays -Bytes 0 -Items 0 -Failures 0 -Status "app open"
+    return $false
+}
+
 function Add-WildcardTargets {
     param(
         [System.Collections.ArrayList]$Targets,
@@ -1828,7 +1844,7 @@ if ($Deep) {
     Add-Target -Targets $targets -Label "Delivery Optimization cache" -Path (Join-Path $env:ProgramData "Microsoft\Windows\DeliveryOptimization\Cache") -Days $CacheOlderThanDays
 }
 
-if ($CleanBrowserCaches) {
+if ($CleanBrowserCaches -and (Test-BrowserCacheCleanupAllowed)) {
     Add-WildcardTargets -Targets $targets -Label "Microsoft Edge cache" -Pattern (Join-Path $env:LOCALAPPDATA "Microsoft\Edge\User Data\*\Cache\Cache_Data") -Days $CacheOlderThanDays
     Add-WildcardTargets -Targets $targets -Label "Google Chrome cache" -Pattern (Join-Path $env:LOCALAPPDATA "Google\Chrome\User Data\*\Cache\Cache_Data") -Days $CacheOlderThanDays
     Add-WildcardTargets -Targets $targets -Label "Brave cache" -Pattern (Join-Path $env:LOCALAPPDATA "BraveSoftware\Brave-Browser\User Data\*\Cache\Cache_Data") -Days $CacheOlderThanDays

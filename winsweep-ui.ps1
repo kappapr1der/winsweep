@@ -17,7 +17,7 @@ Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-$script:WinSweepVersion = "1.1.2"
+$script:WinSweepVersion = "1.1.3"
 $script:PowerShellPath = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $script:ConfigPath = Join-Path $PSScriptRoot "winsweep-config.json"
 $script:ActiveProcess = $null
@@ -374,7 +374,7 @@ function Refresh-CacheControls {
         slackCache = 'Slack'
         teamsCache = 'Microsoft Teams'
         zoomCache = 'Zoom'
-        browserCaches = 'Браузеры'
+        browserCaches = 'Браузеры (только когда закрыты)'
         developerCaches = 'Инструменты разработки'
         gameCaches = 'Игровые лаунчеры'
         notifyOnPressure = 'Уведомления с итогом очистки'

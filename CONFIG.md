@@ -37,7 +37,7 @@
 - `slackCache`
 - `teamsCache`
 - `zoomCache`
-- `browserCaches`
+- `browserCaches`: чистятся только когда Chrome, Edge, Brave и Firefox закрыты, чтобы не ломать открытые вкладки.
 - `developerCaches`
 - `gameCaches`
 
