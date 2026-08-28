@@ -18,7 +18,7 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.2.0";
+    private const string Version = "1.2.1";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
     private static readonly HttpClient UpdateClient = new() { Timeout = TimeSpan.FromSeconds(8) };
 
@@ -244,7 +244,7 @@ public partial class MainWindow : Window
         var features = GetObject(_config, "features");
         var labels = new (string Key, string Label)[]
         {
-            ("spotifyCache", "Spotify (бережно при запуске)"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
+            ("spotifyCache", "Spotify (автоочистка отключена)"), ("discordCache", "Discord"), ("telegramCache", "Telegram Desktop"),
             ("slackCache", "Slack"), ("teamsCache", "Microsoft Teams"), ("zoomCache", "Zoom"),
             ("browserCaches", "Браузеры (только когда закрыты)"), ("developerCaches", "Инструменты разработки"),
             ("gameCaches", "Игровые лаунчеры"), ("notifyOnPressure", "Уведомления с итогом очистки")
@@ -257,6 +257,12 @@ public partial class MainWindow : Window
                 Content = label, Tag = key, Width = 280,
                 IsChecked = GetBool(features, key, false)
             };
+            if (string.Equals(key, "spotifyCache", StringComparison.OrdinalIgnoreCase))
+            {
+                checkBox.IsChecked = false;
+                checkBox.IsEnabled = false;
+                checkBox.ToolTip = "Spotify исключён из автоматической очистки: Store-версия смешивает кэш с данными интерфейса.";
+            }
             CachePanel.Children.Add(checkBox);
             _cacheCheckboxes[key] = checkBox;
         }

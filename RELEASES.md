@@ -13,10 +13,10 @@ portable-версия остаётся self-contained: после загрузк
 Собрать архив локально:
 
 ```powershell
-.\build-release.ps1 -Version 1.2.0 -Portable
+.\build-release.ps1 -Version 1.2.1 -Portable
 ```
 
-Готовый файл появится в `dist\WinSweep-Portable-v1.2.0.zip`. После первого
+Готовый файл появится в `dist\WinSweep-Portable-v1.2.1.zip`. После первого
 запуска `WinSweep.exe` создаст скрытую папку `WinSweepData` рядом с собой.
 В ней находятся настройки и внутренний движок, поэтому всю папку можно
 переносить целиком.
@@ -24,7 +24,7 @@ portable-версия остаётся self-contained: после загрузк
 Обычная сборка остаётся доступна для совместимости:
 
 ```powershell
-.\build-release.ps1 -Version 1.2.0
+.\build-release.ps1 -Version 1.2.1
 ```
 
 ## Автоматический релиз GitHub Actions
@@ -32,8 +32,8 @@ portable-версия остаётся self-contained: после загрузк
 GitHub Actions собирает релиз после пуша тега:
 
 ```powershell
-git tag v1.2.0
-git push origin v1.2.0
+git tag v1.2.1
+git push origin v1.2.1
 ```
 
 Это работает, только пока для аккаунта разрешён запуск Actions. При ошибке
@@ -52,19 +52,19 @@ GitHub Actions.
 Затем опубликуй portable-архив:
 
 ```powershell
-.\publish-release.ps1 -Version 1.2.0 -Portable
+.\publish-release.ps1 -Version 1.2.1 -Portable
 ```
 
-Сценарий собирает ZIP, создаёт или использует тег `v1.2.0` и прикрепляет архив
+Сценарий собирает ZIP, создаёт или использует тег `v1.2.1` и прикрепляет архив
 к GitHub Release. Токен сохраняется зашифрованным через DPAPI в
 `%APPDATA%\WinSweep\github-token.txt`, а в репозиторий не попадает.
 
 Полезные варианты:
 
 ```powershell
-.\publish-release.ps1 -Version 1.2.0 -Portable -DryRun
-.\publish-release.ps1 -Version 1.2.0 -Portable -Prerelease
-.\publish-release.ps1 -Version 1.2.0 -Portable -UpdateExisting -ReplaceAsset
+.\publish-release.ps1 -Version 1.2.1 -Portable -DryRun
+.\publish-release.ps1 -Version 1.2.1 -Portable -Prerelease
+.\publish-release.ps1 -Version 1.2.1 -Portable -UpdateExisting -ReplaceAsset
 .\save-github-token.ps1 -Clear
 ```
 

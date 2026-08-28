@@ -368,7 +368,7 @@ function Refresh-CacheControls {
     $cachePanel.Children.Clear()
     $script:CacheCheckboxes = @{}
     $labels = [ordered]@{
-        spotifyCache = 'Spotify (бережно при запуске)'
+        spotifyCache = 'Spotify (автоочистка отключена ради сохранности данных)'
         discordCache = 'Discord'
         telegramCache = 'Telegram Desktop'
         slackCache = 'Slack'
@@ -385,6 +385,11 @@ function Refresh-CacheControls {
         $check.Tag = $entry.Key
         $check.Width = 280
         $check.IsChecked = [bool](Get-ConfigValue -Object $script:Config.features -Name $entry.Key -Fallback $false)
+        if ($entry.Key -eq 'spotifyCache') {
+            $check.IsChecked = $false
+            $check.IsEnabled = $false
+            $check.ToolTip = 'Spotify исключён из автоматической очистки: Store-версия смешивает кэш с данными интерфейса.'
+        }
         [void]$cachePanel.Children.Add($check)
         $script:CacheCheckboxes[$entry.Key] = $check
     }

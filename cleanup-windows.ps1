@@ -44,7 +44,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.2.0"
+$script:WinSweepVersion = "1.2.1"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -66,7 +66,6 @@ $script:SmartGuardSettings = [pscustomobject]@{
     EmergencyFreeGB               = 30
     LightCacheOlderThanDays       = 7
     StandardCacheOlderThanDays    = 3
-    ActiveSpotifyCacheOlderThanDays = 7
     NotificationMinimumMB         = 100
 }
 $script:CliParameters = @{}
@@ -354,7 +353,6 @@ if ($null -ne $config) {
     Set-SmartGuardSettingFromConfig -Name "EmergencyFreeGB" -Value (Get-ConfigProperty -Object $automation -Name "emergencyFreeGB") -Minimum 1
     Set-SmartGuardSettingFromConfig -Name "LightCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "lightCacheOlderThanDays") -Minimum 0
     Set-SmartGuardSettingFromConfig -Name "StandardCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "standardCacheOlderThanDays") -Minimum 0
-    Set-SmartGuardSettingFromConfig -Name "ActiveSpotifyCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "activeSpotifyCacheOlderThanDays") -Minimum 1
     Set-SmartGuardSettingFromConfig -Name "NotificationMinimumMB" -Value (Get-ConfigProperty -Object $automation -Name "notificationMinimumMB") -Minimum 0
 
     $features = Get-ConfigProperty -Object $config -Name "features"
@@ -740,7 +738,7 @@ function Invoke-PreflightCheck {
         return
     }
 
-    if ($CleanSpotifyCache -or $CleanAppCaches -or $AggressiveSafe) {
+    if ($CleanSpotifyCache) {
         Add-PreflightResult -App "Spotify" -Processes @("Spotify") -Reason "Spotify Store/classic cache can be locked while it is running."
     }
     if ($CleanAppCaches -or $CleanTelegramCache -or $AggressiveSafe) {
@@ -1435,73 +1433,16 @@ function Add-WildcardTargets {
     }
 }
 
-function Add-SpotifyConfiguredStorageTargets {
-    param(
-        [System.Collections.ArrayList]$Targets,
-        [int]$Days
-    )
-
-    $prefFiles = @(
-        (Join-Path $env:APPDATA "Spotify\prefs"),
-        (Join-Path $env:LOCALAPPDATA "Spotify\prefs"),
-        (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\prefs")
-    )
-
-    foreach ($prefFile in $prefFiles) {
-        if (-not (Test-Path -LiteralPath $prefFile -PathType Leaf -ErrorAction SilentlyContinue)) {
-            continue
-        }
-
-        try {
-            Get-Content -LiteralPath $prefFile -ErrorAction Stop | ForEach-Object {
-                $match = [regex]::Match($_, '^\s*storage\.location\s*=\s*"?(.+?)"?\s*$')
-                if ($match.Success) {
-                    $configuredPath = $match.Groups[1].Value.Trim('"') -replace '\\\\', '\'
-                    if (-not [string]::IsNullOrWhiteSpace($configuredPath)) {
-                        Add-Target -Targets $Targets -Label "Spotify configured storage cache" -Path $configuredPath -Days $Days
-                    }
-                }
-            }
-        }
-        catch {
-            Write-Log "Could not read Spotify prefs: $prefFile. $($_.Exception.Message)" "WARN"
-        }
-    }
-}
-
 function Add-SpotifyCacheTargets {
     param(
         [System.Collections.ArrayList]$Targets,
         [int]$Days
     )
 
-    $running = @(Get-RunningProcessNames -Processes @("Spotify"))
-    $streamDays = $Days
-    if ($running.Count -gt 0) {
-        $streamDays = [Math]::Max($Days, $script:SmartGuardSettings.ActiveSpotifyCacheOlderThanDays)
-        $processList = $running -join ", "
-        Write-Log "Spotify is open: only music cache older than $streamDays day(s) will be cleaned; active browser and code caches are deferred."
-        $script:CloseHints["Spotify is open: browser/code cache deferred; stale music cache older than $streamDays days is still eligible."] = $true
-        Add-CleanupResult -Label "Spotify active browser cache" -Path "open processes: $processList" -Days $streamDays -Bytes 0 -Items 0 -Failures 0 -Status "app open"
-    }
-
-    Add-Target -Targets $Targets -Label "Spotify stream cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Data") -Days $streamDays
-    Add-Target -Targets $Targets -Label "Spotify storage cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Storage") -Days $streamDays
-    Add-Target -Targets $Targets -Label "Spotify Store stream cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Data") -Days $streamDays
-    Add-Target -Targets $Targets -Label "Spotify Store storage cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Storage") -Days $streamDays
-    Add-SpotifyConfiguredStorageTargets -Targets $Targets -Days $streamDays
-
-    if ($running.Count -gt 0) {
-        return
-    }
-
-    Add-Target -Targets $Targets -Label "Spotify browser cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify code cache" -Path (Join-Path $env:LOCALAPPDATA "Spotify\Browser\Code Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify roaming browser cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify roaming code cache" -Path (Join-Path $env:APPDATA "Spotify\Browser\Code Cache") -Days $Days
-    Add-WildcardTargets -Targets $Targets -Label "Spotify user cache" -Pattern (Join-Path $env:APPDATA "Spotify\Users\*\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store browser cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Cache") -Days $Days
-    Add-Target -Targets $Targets -Label "Spotify Store code cache" -Path (Join-Path $env:LOCALAPPDATA "Packages\SpotifyAB.SpotifyMusic_zpdnekdrzrea0\LocalCache\Spotify\Browser\Code Cache") -Days $Days
+    $message = "Spotify cache cleanup is disabled by the safety policy. Use Spotify storage settings for any manual download cleanup."
+    Write-Log $message
+    $script:CloseHints[$message] = $true
+    Add-CleanupResult -Label "Spotify cache" -Path "disabled by safety policy" -Days $Days -Bytes 0 -Items 0 -Failures 0 -Status "disabled"
 }
 
 function Add-DiscordCacheTargets {
@@ -1578,7 +1519,6 @@ function Add-AppCacheTargets {
         [int]$Days
     )
 
-    Add-SpotifyCacheTargets -Targets $Targets -Days $Days
     if (Test-AppCacheCleanupAllowed -App "Discord" -Processes @("Discord") -ResultLabel "Discord cache") {
         Add-DiscordCacheTargets -Targets $Targets -Days $Days
     }
@@ -1918,7 +1858,6 @@ if ($AggressiveSafe) {
 }
 
 if ($CleanAppCaches) {
-    $CleanSpotifyCache = $true
     $CleanDiscordCache = $true
     $CleanTelegramCache = $true
     $CleanSlackCache = $true

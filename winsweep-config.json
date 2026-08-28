@@ -24,14 +24,13 @@
     "emergencyFreeGB": 30,
     "lightCacheOlderThanDays": 7,
     "standardCacheOlderThanDays": 3,
-    "activeSpotifyCacheOlderThanDays": 7,
     "notificationMinimumMB": 100
   },
   "features": {
     "aggressiveSafe": true,
     "browserCaches": true,
     "appCaches": true,
-    "spotifyCache": true,
+    "spotifyCache": false,
     "discordCache": true,
     "telegramCache": true,
     "slackCache": false,
