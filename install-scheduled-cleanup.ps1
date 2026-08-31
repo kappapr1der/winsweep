@@ -284,14 +284,14 @@ $deepTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek $DeepDay -At $DeepWe
 Register-CleanupTask `
     -Name "Pressure Guard" `
     -Trigger $guardTriggers `
-    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
+    -CleanupArgs "-SmartGuard -ScheduledGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
     -Description "Checks disk pressure every few hours and cleans safe caches only when free space is low." `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 Register-CleanupTask `
     -Name "Startup Guard" `
     -Trigger $logonTrigger `
-    -CleanupArgs "-SmartGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
+    -CleanupArgs "-SmartGuard -ScheduledGuard -AggressiveSafe -MinFreeGB $LowFreeGB -MinFreePercent $LowFreePercent -TempOlderThanDays 0 -CacheOlderThanDays 0$optionalArgs" `
     -Description "Checks disk pressure shortly after logon and cleans safe caches only when free space is low." `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 

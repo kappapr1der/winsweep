@@ -4,6 +4,7 @@ param(
     [switch]$DryRun,
     [switch]$Analyze,
     [switch]$SmartGuard,
+    [switch]$ScheduledGuard,
     [switch]$AggressiveSafe,
     [switch]$CleanBrowserCaches,
     [switch]$CleanAppCaches,
@@ -44,7 +45,7 @@ if (Test-Path -LiteralPath $encodingHelper -PathType Leaf) {
     . $encodingHelper
 }
 
-$script:WinSweepVersion = "1.2.1"
+$script:WinSweepVersion = "1.2.2"
 $script:DeletedBytes = [int64]0
 $script:DeletedItems = 0
 $script:PotentialBytes = [int64]0
@@ -61,12 +62,14 @@ $script:ExcludedPaths = @()
 $script:PerDriveThresholds = $null
 $script:LastGuardSnapshot = $null
 $script:SmartGuardTier = ""
+$script:ScheduledGuardStatePath = ""
 $script:SmartGuardSettings = [pscustomobject]@{
     StandardFreeGB                = 50
     EmergencyFreeGB               = 30
     LightCacheOlderThanDays       = 7
     StandardCacheOlderThanDays    = 3
     NotificationMinimumMB         = 100
+    ScheduledGuardCooldownMinutes = 45
 }
 $script:CliParameters = @{}
 foreach ($key in $PSBoundParameters.Keys) {
@@ -354,6 +357,7 @@ if ($null -ne $config) {
     Set-SmartGuardSettingFromConfig -Name "LightCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "lightCacheOlderThanDays") -Minimum 0
     Set-SmartGuardSettingFromConfig -Name "StandardCacheOlderThanDays" -Value (Get-ConfigProperty -Object $automation -Name "standardCacheOlderThanDays") -Minimum 0
     Set-SmartGuardSettingFromConfig -Name "NotificationMinimumMB" -Value (Get-ConfigProperty -Object $automation -Name "notificationMinimumMB") -Minimum 0
+    Set-SmartGuardSettingFromConfig -Name "ScheduledGuardCooldownMinutes" -Value (Get-ConfigProperty -Object $automation -Name "scheduledGuardCooldownMinutes") -Minimum 1
 
     $features = Get-ConfigProperty -Object $config -Name "features"
     Set-SwitchFromConfig -Name "AggressiveSafe" -Value (Get-ConfigProperty -Object $features -Name "aggressiveSafe")
@@ -396,6 +400,7 @@ Set-ExcludedPaths -Paths $ExcludedPaths
 $LogDir = New-LogFolder -PreferredLogDir $LogDir
 $LogStamp = "{0:yyyy-MM-dd-HHmmss-fff}-pid{1}" -f (Get-Date), $PID
 $LogFile = Join-Path $LogDir ("cleanup-$LogStamp.log")
+$script:ScheduledGuardStatePath = Join-Path (Join-Path (Split-Path -Parent $LogDir) "State") "last-scheduled-guard.json"
 
 function Write-Log {
     param(
@@ -613,6 +618,29 @@ function Test-IsLockedResourceException {
     return $false
 }
 
+function Test-IsMissingPathException {
+    param([System.Exception]$Exception)
+
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [System.IO.FileNotFoundException] -or
+            $current -is [System.IO.DirectoryNotFoundException] -or
+            $current -is [System.Management.Automation.ItemNotFoundException] -or
+            $current.HResult -in @(-2147024894, -2147024893)) {
+            return $true
+        }
+
+        $message = [string]$current.Message
+        if ($message -match 'Could not find (a part of )?the path|Cannot find path|Не удается найти (путь|часть пути)') {
+            return $true
+        }
+
+        $current = $current.InnerException
+    }
+
+    return $false
+}
+
 function Register-RemovalIssue {
     param(
         [string]$Label,
@@ -625,6 +653,11 @@ function Register-RemovalIssue {
         $script:LockedItems += 1
         Add-CloseHint -Label $Label
         Write-Log "Skipped locked $ItemType for ${Label}: $Path. $($Exception.Message)" "WARN"
+        return
+    }
+
+    if (Test-IsMissingPathException -Exception $Exception) {
+        Write-Log "Skipped already removed $ItemType for ${Label}: $Path." -Detail
         return
     }
 
@@ -1082,6 +1115,54 @@ function Set-SmartGuardTier {
         ("temp: older than $effectiveTempDays day(s)"),
         ("cache: older than $effectiveCacheDays day(s)")
     )
+}
+
+function Test-RecentScheduledGuard {
+    if ([string]::IsNullOrWhiteSpace($script:ScheduledGuardStatePath) -or
+        -not (Test-Path -LiteralPath $script:ScheduledGuardStatePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    try {
+        $state = Get-Content -LiteralPath $script:ScheduledGuardStatePath -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $startedAt = [DateTimeOffset]::Parse(
+            [string](Get-ConfigProperty -Object $state -Name "startedAtUtc"),
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind
+        ).ToUniversalTime()
+        $elapsedMinutes = ([DateTimeOffset]::UtcNow - $startedAt).TotalMinutes
+        $cooldownMinutes = $script:SmartGuardSettings.ScheduledGuardCooldownMinutes
+
+        if ($elapsedMinutes -ge 0 -and $elapsedMinutes -lt $cooldownMinutes) {
+            Write-Log ("Scheduled guard skipped: another scheduled guard started {0:N0} minute(s) ago; cooldown is {1} minute(s)." -f $elapsedMinutes, $cooldownMinutes)
+            return $true
+        }
+    }
+    catch {
+        Write-Log "Could not read scheduled guard state. Continuing safely. $($_.Exception.Message)" "WARN"
+    }
+
+    return $false
+}
+
+function Save-ScheduledGuardState {
+    if ([string]::IsNullOrWhiteSpace($script:ScheduledGuardStatePath)) {
+        return
+    }
+
+    try {
+        $stateFolder = Split-Path -Parent $script:ScheduledGuardStatePath
+        New-Item -ItemType Directory -Path $stateFolder -Force -ErrorAction Stop | Out-Null
+        $state = [ordered]@{
+            startedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+            processId = $PID
+            version = $script:WinSweepVersion
+        }
+        $state | ConvertTo-Json | Set-Content -LiteralPath $script:ScheduledGuardStatePath -Encoding UTF8 -ErrorAction Stop
+    }
+    catch {
+        Write-Log "Could not save scheduled guard state. Continuing safely. $($_.Exception.Message)" "WARN"
+    }
 }
 
 function Get-NotificationLabel {
@@ -1901,19 +1982,28 @@ if (-not [string]::IsNullOrWhiteSpace($script:ConfigSource)) {
 
 Write-Panel -Title "WinSweep" -Lines $introLines
 
-Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Config=$script:ConfigSource Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard GuardDrive=$GuardDrive MinFreeGB=$MinFreeGB MinFreePercent=$MinFreePercent AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache DiscordCache=$CleanDiscordCache TelegramCache=$CleanTelegramCache SlackCache=$CleanSlackCache TeamsCache=$CleanTeamsCache ZoomCache=$CleanZoomCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin ExcludedPaths=$($script:ExcludedPaths.Count)"
+Write-Log "Windows cleanup started. Version=$script:WinSweepVersion Profile=$(Get-ProfileName) Config=$script:ConfigSource Analyze=$Analyze Deep=$Deep DryRun=$DryRun SmartGuard=$SmartGuard ScheduledGuard=$ScheduledGuard GuardDrive=$GuardDrive MinFreeGB=$MinFreeGB MinFreePercent=$MinFreePercent AggressiveSafe=$AggressiveSafe BrowserCaches=$CleanBrowserCaches AppCaches=$CleanAppCaches SpotifyCache=$CleanSpotifyCache DiscordCache=$CleanDiscordCache TelegramCache=$CleanTelegramCache SlackCache=$CleanSlackCache TeamsCache=$CleanTeamsCache ZoomCache=$CleanZoomCache Registry=$CleanRegistry ExtraPaths=$CleanExtraPaths DeveloperCaches=$CleanDeveloperCaches GameCaches=$CleanGameCaches ClearRecycleBin=$ClearRecycleBin ExcludedPaths=$($script:ExcludedPaths.Count)"
 Write-Log "Log file: $LogFile" -Detail
 if (-not [string]::IsNullOrWhiteSpace($script:ConfigLoadWarning)) {
     Write-Log $script:ConfigLoadWarning "WARN"
 }
 
-if ($SmartGuard -and -not (Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent)) {
-    Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")
-    exit 0
-}
-
 if ($SmartGuard) {
+    $shouldRunSmartGuard = Test-ShouldRunSmartGuard -Drive $GuardDrive -MinimumFreeGB $MinFreeGB -MinimumFreePercent $MinFreePercent
+    if ($shouldRunSmartGuard -and $ScheduledGuard -and (Test-RecentScheduledGuard)) {
+        Write-Panel -Title "Done" -Lines @("A recent scheduled cleanup already handled this check.")
+        exit 0
+    }
+
+    if (-not $shouldRunSmartGuard) {
+        Write-Panel -Title "Done" -Lines @("No cleanup needed right now.")
+        exit 0
+    }
+
     Set-SmartGuardTier -Snapshot $script:LastGuardSnapshot
+    if ($ScheduledGuard) {
+        Save-ScheduledGuardState
+    }
 }
 
 $startSnapshot = Get-DriveSnapshot -Drive $GuardDrive

@@ -18,7 +18,7 @@ namespace WinSweepLauncher;
 
 public partial class MainWindow : Window
 {
-    private const string Version = "1.2.1";
+    private const string Version = "1.2.2";
     private const long WorkingSetLimitBytes = 1536L * 1024 * 1024;
     private static readonly HttpClient UpdateClient = new() { Timeout = TimeSpan.FromSeconds(8) };
 

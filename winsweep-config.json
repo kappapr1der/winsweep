@@ -24,7 +24,8 @@
     "emergencyFreeGB": 30,
     "lightCacheOlderThanDays": 7,
     "standardCacheOlderThanDays": 3,
-    "notificationMinimumMB": 100
+    "notificationMinimumMB": 100,
+    "scheduledGuardCooldownMinutes": 45
   },
   "features": {
     "aggressiveSafe": true,
